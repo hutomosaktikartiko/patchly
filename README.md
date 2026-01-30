@@ -1,4 +1,4 @@
-# AllCrypt - Client-side File Encryption
+# Patchly – Client-side File Diff & Patch Engine
 
 A **100% client-side binary diff & patch tool** built with **Rust compiled to WebAssembly**, running entirely in the browser.
 
@@ -203,7 +203,7 @@ Result file is downloaded
 ### UI/UX
 
 - [] File picker
-- [ ] Mode selector (Generate / Apply)
+- [] Mode selector (Generate / Apply)
 - [] Progress bar
 - [] Error messages
 - [] Patch size vs full size comparison
