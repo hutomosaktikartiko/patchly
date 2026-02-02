@@ -26,6 +26,7 @@ struct ChunkSignature {
     /// Offset where this cunk starts in source
     offset: usize,
     /// Weak hash (rolling hash) for quick comparison
+    #[allow(dead_code)]
     weak_hash: u32,
 }
 

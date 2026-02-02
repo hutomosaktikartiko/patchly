@@ -14,7 +14,7 @@ use crate::format::patch_format::{Instruction, Patch};
 ///
 /// # Returns
 /// A patch containing instructions to transform source -> target
-pub fn generete_patch(source: &[u8], target: &[u8]) -> Patch {
+pub fn generate_patch(source: &[u8], target: &[u8]) -> Patch {
     generate_patch_with_chunk_size(source, target, DEFAULT_CHUNK_SIZE)
 }
 
@@ -121,7 +121,7 @@ fn optimize_macthes(matches: &[BlockMatch]) -> Vec<BlockMatch> {
 /// * `patch` - Patch containing transformation instructions
 ///
 /// # Returns
-/// Result containing the reconstructured target data, or an error
+/// Result containing the reconstructed target data, or an error
 pub fn apply_patch(source: &[u8], patch: &Patch) -> Result<Vec<u8>, PatchError> {
     let mut output = Vec::with_capacity(patch.target_size as usize);
 
@@ -136,7 +136,7 @@ pub fn apply_patch(source: &[u8], patch: &Patch) -> Result<Vec<u8>, PatchError> 
                     return Err(PatchError::CopyOutOfBounds {
                         instruction_index: idx,
                         offset: *offset,
-                        lenth: *length,
+                        length: *length,
                         source_len: source.len(),
                     });
                 }
@@ -159,19 +159,42 @@ pub fn apply_patch(source: &[u8], patch: &Patch) -> Result<Vec<u8>, PatchError> 
 
     Ok(output)
 }
-
-/// Error that can occur when applyying a patch
+/// Errors that can occur when applying a patch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatchError {
     /// COPY instruction references data outside source bounds
     CopyOutOfBounds {
         instruction_index: usize,
         offset: u64,
-        lenth: u32,
+        length: u32,
         source_len: usize,
     },
     /// Final output size doesn't match expected target size
     SizeMismatch { expected: usize, actual: usize },
+}
+
+impl std::fmt::Display for PatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PatchError::CopyOutOfBounds {
+                instruction_index,
+                offset,
+                length,
+                source_len,
+            } => {
+                write!(
+                    f,
+                    "COPY instruction {} out of bounds: offset={}, length={}, source_len={}",
+                    instruction_index, offset, length, source_len
+                )
+            }
+            PatchError::SizeMismatch { expected, actual } => write!(
+                f,
+                "Output size mismatch: expected {}, got {}",
+                expected, actual,
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
