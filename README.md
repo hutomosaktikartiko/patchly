@@ -177,6 +177,7 @@ Result file is downloaded
 - [] Binary block matching
 - [] Insert/copy patch instructions
 - [] Deterministic patch output
+- [] Buffer utilities for chunked processing
 
 ### Web Worker
 
@@ -192,6 +193,7 @@ Result file is downloaded
 - [] Chunk-based diffing
 - [] Streaming output to disk (OPFS)
 - [] Transferable buffers (zero-copy)
+- [] ChunkBuffer for memory-efficient processing
 
 ### Safety & Validation
 
