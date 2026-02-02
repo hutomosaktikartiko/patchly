@@ -1,7 +1,7 @@
 //! Binary patch file format (serialize/deserialize).
 //!
 //! Format structure:
-//! - Header: magic(4) + version(1) + chunk_size(4) + target_size(8)
+//! - Header: magic(4) + version(1) + chunk_size(4) + source_size(8) + source_hash(8) + target_size(8)
 //! - Instructions: sequence of COPY or INSERT operations
 
 use std::io::{self, Read, Write};
@@ -16,15 +16,16 @@ const VERSION: u8 = 1;
 const TYPE_COPY: u8 = 0x01;
 const TYPE_INSERT: u8 = 0x02;
 
+const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+const FNV_PRIME: u64 = 0x100000001b3;
+
 /// A single patch instruction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instruction {
     /// Copy bytes from source file.
-    /// (source_offset, length)
     Copy { offset: u64, length: u32 },
 
     /// Insert new bytes (not present in source)
-    /// Contains the actual data to insert.
     Insert { data: Vec<u8> },
 }
 
@@ -33,6 +34,10 @@ pub enum Instruction {
 pub struct Patch {
     /// Chunk size used during diff generation
     pub chunk_size: u32,
+    /// Size of source file (for validation)
+    pub source_size: u64,
+    /// Hash of source file (for validation)
+    pub source_hash: u64,
     /// Expected size of target file after applying patch
     pub target_size: u64,
     /// List of instructions in order
@@ -41,9 +46,11 @@ pub struct Patch {
 
 impl Patch {
     /// Create a new empty patch.
-    pub fn new(chunk_size: u32, target_size: u64) -> Self {
+    pub fn new(chunk_size: u32, source_size: u64, source_hash: u64, target_size: u64) -> Self {
         Self {
             chunk_size,
+            source_size,
+            source_hash,
             target_size,
             instructions: Vec::new(),
         }
@@ -69,6 +76,8 @@ impl Patch {
         buffer.write_all(MAGIC)?;
         buffer.write_all(&[VERSION])?;
         buffer.write_all(&self.chunk_size.to_le_bytes())?;
+        buffer.write_all(&self.source_size.to_le_bytes())?;
+        buffer.write_all(&self.source_hash.to_le_bytes())?;
         buffer.write_all(&self.target_size.to_le_bytes())?;
 
         // Write instructions
@@ -110,7 +119,10 @@ impl Patch {
         if version[0] != VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unsupported patch version: {}", version[0]),
+                format!(
+                    "Unsupported patch version: {} (expected {})",
+                    version[0], VERSION
+                ),
             ));
         }
 
@@ -118,6 +130,16 @@ impl Patch {
         let mut chunk_size_bytes = [0u8; 4];
         cursor.read_exact(&mut chunk_size_bytes)?;
         let chunk_size = u32::from_le_bytes(chunk_size_bytes);
+
+        // Read source_size
+        let mut source_size_bytes = [0u8; 8];
+        cursor.read_exact(&mut source_size_bytes)?;
+        let source_size = u64::from_le_bytes(source_size_bytes);
+
+        // Read source_hash
+        let mut source_hash_bytes = [0u8; 8];
+        cursor.read_exact(&mut source_hash_bytes)?;
+        let source_hash = u64::from_le_bytes(source_hash_bytes);
 
         // Read target_size
         let mut target_size_bytes = [0u8; 8];
@@ -167,6 +189,8 @@ impl Patch {
 
         Ok(Self {
             chunk_size,
+            source_size,
+            source_hash,
             target_size,
             instructions,
         })
@@ -184,8 +208,8 @@ impl Patch {
         let mut insert_count = 0;
         let mut insert_bytes = 0u64;
 
-        for instruction in &self.instructions {
-            match instruction {
+        for inst in &self.instructions {
+            match inst {
                 Instruction::Copy { length, .. } => {
                     copy_count += 1;
                     copy_bytes += *length as u64;
@@ -204,6 +228,27 @@ impl Patch {
             insert_bytes,
         }
     }
+
+    /// Validate that source file matches expected hash and size.
+    pub fn validate_source(
+        &self,
+        source_size: u64,
+        source_hash: u64,
+    ) -> Result<(), ValidationError> {
+        if source_size != self.source_size {
+            return Err(ValidationError::SizeMismatch {
+                expected: self.source_size,
+                actual: source_size,
+            });
+        }
+        if source_hash != self.source_hash {
+            return Err(ValidationError::HashMismatch {
+                expected: self.source_hash,
+                actual: source_hash,
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Statistics about a patch
@@ -215,21 +260,90 @@ pub struct PatchStats {
     pub insert_bytes: u64,
 }
 
+/// Validation errors when source file doesn't match patch requirements
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidationError {
+    SizeMismatch { expected: u64, actual: u64 },
+    HashMismatch { expected: u64, actual: u64 },
+}
+
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValidationError::SizeMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "Source size mismatch: expected {} bytes, got {} bytes",
+                    expected, actual
+                )
+            }
+            ValidationError::HashMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "Source hash mismatch: expected {:016x}, got {:016x}",
+                    expected, actual
+                )
+            }
+        }
+    }
+}
+
+/// Calculate a simple 64-bit hash of data (FNV-1a variant)
+/// Used for secure file verification.
+pub fn calculate_hash(data: &[u8]) -> u64 {
+    let mut hash = FNV_OFFSET;
+    for &byte in data {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+/// Calculate hash incrementally from chunks.
+pub struct HashBuilder {
+    hash: u64,
+}
+
+impl HashBuilder {
+    pub fn new() -> Self {
+        Self { hash: FNV_OFFSET }
+    }
+
+    pub fn update(&mut self, data: &[u8]) {
+        for &byte in data {
+            self.hash ^= byte as u64;
+            self.hash = self.hash.wrapping_mul(FNV_PRIME)
+        }
+    }
+
+    pub fn finalize(&self) -> u64 {
+        self.hash
+    }
+}
+
+impl Default for HashBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_new_patch() {
-        let patch = Patch::new(4096, 1000);
+        let patch = Patch::new(4096, 1000, 12345, 2000);
         assert_eq!(patch.chunk_size, 4096);
-        assert_eq!(patch.target_size, 1000);
+        assert_eq!(patch.source_size, 1000);
+        assert_eq!(patch.source_hash, 12345);
+        assert_eq!(patch.target_size, 2000);
         assert!(patch.instructions.is_empty());
     }
 
     #[test]
     fn test_add_copy() {
-        let mut patch = Patch::new(4096, 1000);
+        let mut patch = Patch::new(4096, 100, 0, 100);
         patch.add_copy(100, 50);
 
         assert_eq!(patch.instructions.len(), 1);
@@ -244,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_add_insert() {
-        let mut patch = Patch::new(4096, 1000);
+        let mut patch = Patch::new(4096, 100, 0, 100);
         patch.add_insert(vec![1, 2, 3, 4]);
 
         assert_eq!(patch.instructions.len(), 1);
@@ -258,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_add_empty_insert_ignored() {
-        let mut patch = Patch::new(4096, 1000);
+        let mut patch = Patch::new(4096, 100, 0, 100);
         patch.add_insert(vec![]);
 
         assert!(patch.instructions.is_empty());
@@ -266,18 +380,20 @@ mod tests {
 
     #[test]
     fn test_serialize_deserialize_empty() {
-        let patch = Patch::new(4096, 12345);
+        let patch = Patch::new(4096, 12345, 0xABCD, 67890);
         let bytes = patch.serialize().unwrap();
         let restored = Patch::deserialize(&bytes).unwrap();
 
         assert_eq!(restored.chunk_size, 4096);
-        assert_eq!(restored.target_size, 12345);
+        assert_eq!(restored.source_size, 12345);
+        assert_eq!(restored.source_hash, 0xABCD);
+        assert_eq!(restored.target_size, 67890);
         assert!(restored.instructions.is_empty());
     }
 
     #[test]
     fn test_serialize_deserialize_with_instructions() {
-        let mut patch = Patch::new(1024, 5000);
+        let mut patch = Patch::new(1024, 500, 0x1234, 5000);
         patch.add_copy(0, 100);
         patch.add_insert(vec![0xDE, 0xAD, 0xBE, 0xEF]);
         patch.add_copy(200, 300);
@@ -287,17 +403,16 @@ mod tests {
         let restored = Patch::deserialize(&bytes).unwrap();
 
         assert_eq!(restored.chunk_size, 1024);
+        assert_eq!(restored.source_size, 500);
+        assert_eq!(restored.source_hash, 0x1234);
         assert_eq!(restored.target_size, 5000);
         assert_eq!(restored.instructions.len(), 4);
-        assert_eq!(restored.instructions[0], patch.instructions[0]);
-        assert_eq!(restored.instructions[1], patch.instructions[1]);
-        assert_eq!(restored.instructions[2], patch.instructions[2]);
-        assert_eq!(restored.instructions[3], patch.instructions[3]);
+        assert_eq!(restored.instructions, patch.instructions);
     }
 
     #[test]
     fn test_invalid_magic() {
-        let bad_data = b"BADM\x01\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+        let bad_data = b"BADM\x02\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
         let result = Patch::deserialize(bad_data);
 
         assert!(result.is_err());
@@ -306,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_invalid_version() {
-        let bad_data = b"PTCH\x99\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+        let bad_data = b"PTCH\x99\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
         let result = Patch::deserialize(bad_data);
 
         assert!(result.is_err());
@@ -315,7 +430,7 @@ mod tests {
 
     #[test]
     fn test_stats() {
-        let mut patch = Patch::new(1024, 5000);
+        let mut patch = Patch::new(1024, 500, 0, 5000);
         patch.add_copy(0, 100);
         patch.add_copy(200, 150);
         patch.add_insert(vec![1, 2, 3, 4, 5]);
@@ -330,15 +445,80 @@ mod tests {
 
     #[test]
     fn test_header_size() {
-        // Header should be: magic(4) + version(1) + chunk_size(4) + target_size(8) = 17 bytes
-        let patch = Patch::new(4096, 1000);
+        // Header should be: magic(4) + version(1) + chunk_size(4) + source_size(8) + source_hash(8) + target_size(8) = 33 bytes
+        let patch = Patch::new(4096, 1000, 0, 1000);
         let bytes = patch.serialize().unwrap();
-        assert_eq!(bytes.len(), 17);
+        assert_eq!(bytes.len(), 33);
+    }
+
+    #[test]
+    fn test_calculate_hash() {
+        let data = b"hello world";
+        let hash = calculate_hash(data);
+
+        // Same data should produce same hash
+        assert_eq!(hash, calculate_hash(data));
+
+        // Different data should produce different hash
+        assert_ne!(hash, calculate_hash(b"hello world!"));
+    }
+
+    #[test]
+    fn test_hash_builder() {
+        let data = b"hello world";
+
+        // Full hash
+        let full_hash = calculate_hash(data);
+
+        // Incremental hash
+        let mut builder = HashBuilder::new();
+        builder.update(b"hello");
+        builder.update(b" ");
+        builder.update(b"world");
+        let incremental_hash = builder.finalize();
+
+        assert_eq!(full_hash, incremental_hash);
+    }
+
+    #[test]
+    fn test_validate_source_success() {
+        let patch = Patch::new(4096, 100, 0xABCD, 200);
+        assert!(patch.validate_source(100, 0xABCD).is_ok());
+    }
+
+    #[test]
+    fn test_validate_source_size_mismatch() {
+        let patch = Patch::new(4096, 100, 0xABCD, 200);
+        let result = patch.validate_source(50, 0xABCD);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ValidationError::SizeMismatch { expected, actual } => {
+                assert_eq!(expected, 100);
+                assert_eq!(actual, 50);
+            }
+            _ => panic!("Expected SizeMismatch"),
+        }
+    }
+
+    #[test]
+    fn test_validate_source_hash_mismatch() {
+        let patch = Patch::new(4096, 100, 0xABCD, 200);
+        let result = patch.validate_source(100, 0x1234);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ValidationError::HashMismatch { expected, actual } => {
+                assert_eq!(expected, 0xABCD);
+                assert_eq!(actual, 0x1234);
+            }
+            _ => panic!("Expected HashMismatch"),
+        }
     }
 
     #[test]
     fn test_binary_data_in_insert() {
-        let mut patch = Patch::new(1024, 256);
+        let mut patch = Patch::new(1024, 256, 0, 256);
         // Full range of byte values
         let data: Vec<u8> = (0u8..=255).collect();
         patch.add_insert(data.clone());
