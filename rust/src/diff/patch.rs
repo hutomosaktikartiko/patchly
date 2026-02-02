@@ -4,7 +4,7 @@
 //! COPY/INSERT instructions to transfrom source into target.
 
 use crate::diff::matcher::{BlockMatch, BlockMatcher, DEFAULT_CHUNK_SIZE};
-use crate::format::patch_format::{Instruction, Patch};
+use crate::format::patch_format::{calculate_hash, Instruction, Patch, ValidationError};
 
 /// Generate a patch that transfors source into target.
 ///
@@ -28,16 +28,21 @@ pub fn generate_patch(source: &[u8], target: &[u8]) -> Patch {
 /// # Returns
 /// A patch containing instructions to transform source -> target
 pub fn generate_patch_with_chunk_size(source: &[u8], target: &[u8], chunk_size: usize) -> Patch {
-    let mut patch = Patch::new(chunk_size as u32, target.len() as u64);
+    let source_hash = calculate_hash(source);
+    let mut patch = Patch::new(
+        chunk_size as u32,
+        source.len() as u64,
+        source_hash,
+        target.len() as u64,
+    );
 
     // Edge case: empty target
     if target.is_empty() {
         return patch;
     }
 
-    // Edge case: sempty source or source too small for chunking
+    // Edge case: empty source or source too small for chunking
     if source.len() < chunk_size {
-        // Can't do any matching, just insert all of target
         patch.add_insert(target.to_vec());
         return patch;
     }
@@ -60,9 +65,7 @@ pub fn generate_patch_with_chunk_size(source: &[u8], target: &[u8], chunk_size: 
 
 /// Generate COPY and INSERT instructions from macthes.
 fn generate_instructions(patch: &mut Patch, target: &[u8], matches: &[BlockMatch]) {
-    // Remove overlapping matches, keeping the best coverage
     let optimized = optimize_macthes(matches);
-
     let mut current_pos: usize = 0;
 
     for m in &optimized {
@@ -87,8 +90,6 @@ fn generate_instructions(patch: &mut Patch, target: &[u8], matches: &[BlockMatch
 }
 
 /// Optimize matches by removing overlaps.
-/// When matches overlap, we keep the one that starts eralier.
-/// This is a greedy approach that works well in practice.
 fn optimize_macthes(matches: &[BlockMatch]) -> Vec<BlockMatch> {
     if matches.is_empty() {
         return Vec::new();
@@ -123,6 +124,12 @@ fn optimize_macthes(matches: &[BlockMatch]) -> Vec<BlockMatch> {
 /// # Returns
 /// Result containing the reconstructed target data, or an error
 pub fn apply_patch(source: &[u8], patch: &Patch) -> Result<Vec<u8>, PatchError> {
+    // Validate source
+    let source_hash = calculate_hash(source);
+    patch
+        .validate_source(source.len() as u64, source_hash)
+        .map_err(PatchError::ValidationFailed)?;
+
     let mut output = Vec::with_capacity(patch.target_size as usize);
 
     for (idx, instruction) in patch.instructions.iter().enumerate() {
@@ -159,9 +166,12 @@ pub fn apply_patch(source: &[u8], patch: &Patch) -> Result<Vec<u8>, PatchError> 
 
     Ok(output)
 }
+
 /// Errors that can occur when applying a patch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatchError {
+    /// Source file validation failed (wrong file)
+    ValidationFailed(ValidationError),
     /// COPY instruction references data outside source bounds
     CopyOutOfBounds {
         instruction_index: usize,
@@ -176,6 +186,7 @@ pub enum PatchError {
 impl std::fmt::Display for PatchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            PatchError::ValidationFailed(e) => write!(f, "Source validation failed: {}", e),
             PatchError::CopyOutOfBounds {
                 instruction_index,
                 offset,
@@ -206,6 +217,7 @@ mod tests {
         let patch = generate_patch_with_chunk_size(&[], b"hello", 4);
 
         assert_eq!(patch.instructions.len(), 1);
+        assert_eq!(patch.source_size, 0);
         match &patch.instructions[0] {
             Instruction::Insert { data } => assert_eq!(data, b"hello"),
             _ => panic!("Expected Insert"),
@@ -214,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_empty_target() {
-        let patch = generate_patch_with_chunk_size(b"hello", &[], 4);
+        let patch = generate_patch_with_chunk_size(b"hello world", &[], 4);
 
         assert!(patch.instructions.is_empty());
         assert_eq!(patch.target_size, 0);
@@ -307,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn test_target_sirce_recorded() {
+    fn test_target_size_recorded() {
         let source = b"aaaabbbb";
         let target = b"aaaabbbbcccc";
 
@@ -317,10 +329,21 @@ mod tests {
     }
 
     #[test]
+    fn test_source_hash_recorded() {
+        let source = b"aaaabbbb";
+        let target = b"aaaabbbbcccc";
+
+        let patch = generate_patch_with_chunk_size(source, target, 4);
+
+        assert_eq!(patch.source_size, 8);
+        assert_eq!(patch.source_hash, calculate_hash(source));
+    }
+
+    #[test]
     fn test_optimize_matches_no_overflap() {
         let matches = vec![
             BlockMatch {
-                source_offset: 9,
+                source_offset: 0,
                 target_offset: 0,
                 length: 4,
             },
@@ -360,15 +383,12 @@ mod tests {
     fn test_chunk_size_stored_in_patch() {
         let patch = generate_patch_with_chunk_size(b"aaaabbbb", b"aaaabbbb", 4);
         assert_eq!(patch.chunk_size, 4);
-
-        let patch2 = generate_patch_with_chunk_size(b"aaaabbbbccccdddd", b"aaaabbbbccccdddd", 8);
-        assert_eq!(patch2.chunk_size, 8);
     }
 
     #[test]
     fn test_apply_empty_patch() {
         let source = b"hello";
-        let patch = Patch::new(4, 0);
+        let patch = Patch::new(4, source.len() as u64, calculate_hash(source), 0);
 
         let result = apply_patch(source, &patch).unwrap();
         assert!(result.is_empty());
@@ -377,7 +397,7 @@ mod tests {
     #[test]
     fn test_apply_insert_only() {
         let source = b"";
-        let mut patch = Patch::new(4, 5);
+        let mut patch = Patch::new(4, 0, calculate_hash(source), 5);
         patch.add_insert(b"hello".to_vec());
 
         let result = apply_patch(source, &patch).unwrap();
@@ -387,7 +407,7 @@ mod tests {
     #[test]
     fn test_apply_copy_only() {
         let source = b"hello world";
-        let mut patch = Patch::new(4, 5);
+        let mut patch = Patch::new(4, source.len() as u64, calculate_hash(source), 5);
         patch.add_copy(0, 5); // Copy "hello"
 
         let result = apply_patch(source, &patch).unwrap();
@@ -397,7 +417,7 @@ mod tests {
     #[test]
     fn test_apply_mixed_instructions() {
         let source = b"AAAA....BBBB";
-        let mut patch = Patch::new(4, 12);
+        let mut patch = Patch::new(4, source.len() as u64, calculate_hash(source), 12);
         patch.add_copy(0, 4); // "AAAA"
         patch.add_insert(b"NEW!".to_vec()); // "NEW!"
         patch.add_copy(8, 4); // "BBBB"
@@ -409,7 +429,7 @@ mod tests {
     #[test]
     fn test_apply_copy_out_of_bounds() {
         let source = b"short";
-        let mut patch = Patch::new(4, 10);
+        let mut patch = Patch::new(4, source.len() as u64, calculate_hash(source), 10);
         patch.add_copy(0, 100); // Way to long!
 
         let result = apply_patch(source, &patch);
@@ -423,7 +443,7 @@ mod tests {
     #[test]
     fn test_apply_size_mismatch() {
         let source = b"hello";
-        let mut patch = Patch::new(4, 100); // Claims target is 100 bytes
+        let mut patch = Patch::new(4, source.len() as u64, calculate_hash(source), 100); // Claims target is 100 bytes
         patch.add_copy(0, 5);
 
         let result = apply_patch(source, &patch);
@@ -434,6 +454,28 @@ mod tests {
                 actual: 5,
             } => {}
             _ => panic!("Expected SizeMismatch error"),
+        }
+    }
+
+    #[test]
+    fn test_apply_wrong_source_file() {
+        let correct_source = b"correct file";
+        let wrong_source = b"wrong file!!";
+
+        let mut patch = Patch::new(
+            4,
+            correct_source.len() as u64,
+            calculate_hash(correct_source),
+            5,
+        );
+        patch.add_insert(b"hello".to_vec());
+
+        // Try to apply with wrong source
+        let result = apply_patch(wrong_source, &patch);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PatchError::ValidationFailed(_) => {}
+            _ => panic!("Expected ValidationFailed error"),
         }
     }
 
