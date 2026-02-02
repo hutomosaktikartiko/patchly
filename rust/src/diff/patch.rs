@@ -114,6 +114,66 @@ fn optimize_macthes(matches: &[BlockMatch]) -> Vec<BlockMatch> {
     result
 }
 
+/// Apply a patch to source data to produce target data.
+///
+/// # Arguments
+/// * `source` - Original file data
+/// * `patch` - Patch containing transformation instructions
+///
+/// # Returns
+/// Result containing the reconstructured target data, or an error
+pub fn apply_patch(source: &[u8], patch: &Patch) -> Result<Vec<u8>, PatchError> {
+    let mut output = Vec::with_capacity(patch.target_size as usize);
+
+    for (idx, instruction) in patch.instructions.iter().enumerate() {
+        match instruction {
+            Instruction::Copy { offset, length } => {
+                let start = *offset as usize;
+                let end = start + *length as usize;
+
+                // Validate bounds
+                if end > source.len() {
+                    return Err(PatchError::CopyOutOfBounds {
+                        instruction_index: idx,
+                        offset: *offset,
+                        lenth: *length,
+                        source_len: source.len(),
+                    });
+                }
+
+                output.extend_from_slice(&source[start..end]);
+            }
+            Instruction::Insert { data } => {
+                output.extend_from_slice(data);
+            }
+        }
+    }
+
+    // Validate final size
+    if output.len() != patch.target_size as usize {
+        return Err(PatchError::SizeMismatch {
+            expected: patch.target_size as usize,
+            actual: output.len(),
+        });
+    }
+
+    Ok(output)
+}
+
+/// Error that can occur when applyying a patch
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PatchError {
+    /// COPY instruction references data outside source bounds
+    CopyOutOfBounds {
+        instruction_index: usize,
+        offset: u64,
+        lenth: u32,
+        source_len: usize,
+    },
+    /// Final output size doesn't match expected target size
+    SizeMismatch { expected: usize, actual: usize },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +340,131 @@ mod tests {
 
         let patch2 = generate_patch_with_chunk_size(b"aaaabbbbccccdddd", b"aaaabbbbccccdddd", 8);
         assert_eq!(patch2.chunk_size, 8);
+    }
+
+    #[test]
+    fn test_apply_empty_patch() {
+        let source = b"hello";
+        let patch = Patch::new(4, 0);
+
+        let result = apply_patch(source, &patch).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_apply_insert_only() {
+        let source = b"";
+        let mut patch = Patch::new(4, 5);
+        patch.add_insert(b"hello".to_vec());
+
+        let result = apply_patch(source, &patch).unwrap();
+        assert_eq!(result, b"hello");
+    }
+
+    #[test]
+    fn test_apply_copy_only() {
+        let source = b"hello world";
+        let mut patch = Patch::new(4, 5);
+        patch.add_copy(0, 5); // Copy "hello"
+
+        let result = apply_patch(source, &patch).unwrap();
+        assert_eq!(result, b"hello");
+    }
+
+    #[test]
+    fn test_apply_mixed_instructions() {
+        let source = b"AAAA....BBBB";
+        let mut patch = Patch::new(4, 12);
+        patch.add_copy(0, 4); // "AAAA"
+        patch.add_insert(b"NEW!".to_vec()); // "NEW!"
+        patch.add_copy(8, 4); // "BBBB"
+
+        let result = apply_patch(source, &patch).unwrap();
+        assert_eq!(result, b"AAAANEW!BBBB");
+    }
+
+    #[test]
+    fn test_apply_copy_out_of_bounds() {
+        let source = b"short";
+        let mut patch = Patch::new(4, 10);
+        patch.add_copy(0, 100); // Way to long!
+
+        let result = apply_patch(source, &patch);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PatchError::CopyOutOfBounds { .. } => {}
+            _ => panic!("Expected CopyOutBounds error"),
+        }
+    }
+
+    #[test]
+    fn test_apply_size_mismatch() {
+        let source = b"hello";
+        let mut patch = Patch::new(4, 100); // Claims target is 100 bytes
+        patch.add_copy(0, 5);
+
+        let result = apply_patch(source, &patch);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PatchError::SizeMismatch {
+                expected: 100,
+                actual: 5,
+            } => {}
+            _ => panic!("Expected SizeMismatch error"),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_generate_and_apply() {
+        let source = b"aaaabbbbccccdddd";
+        let target = b"aaaaNEWWccccdddd"; // Changed "bbbb" to "NEWW"
+
+        // Generate patch
+        let patch = generate_patch_with_chunk_size(source, target, 4);
+
+        // Apply patch
+        let reconstructed = apply_patch(source, &patch).unwrap();
+
+        // Should get back the target
+        assert_eq!(reconstructed, target);
+    }
+
+    #[test]
+    fn test_roundtrip_with_serialize() {
+        let source = b"originaldatahere";
+        let target = b"originalNEWWhere!";
+
+        // Generate patch
+        let patch = generate_patch_with_chunk_size(source, target, 4);
+
+        // Serialize and deserialize
+        let bytes = patch.serialize().unwrap();
+        let restored_patch = Patch::deserialize(&bytes).unwrap();
+
+        // Apply restored patch
+        let reconstructed = apply_patch(source, &restored_patch).unwrap();
+
+        assert_eq!(reconstructed, target);
+    }
+
+    #[test]
+    fn test_roundtrip_indentical_files() {
+        let data = b"testdatatestdata";
+
+        let patch = generate_patch_with_chunk_size(data, data, 4);
+        let reconstructred = apply_patch(data, &patch).unwrap();
+
+        assert_eq!(reconstructred, data);
+    }
+
+    #[test]
+    fn test_roundtrip_completely_new() {
+        let source = b"olddata!olddata!";
+        let target = b"newstuffnewstuff";
+
+        let patch = generate_patch_with_chunk_size(source, target, 4);
+        let recontsructured = apply_patch(source, &patch).unwrap();
+
+        assert_eq!(recontsructured, target);
     }
 }
