@@ -1,0 +1,15 @@
+{
+  "name": "patchly_wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "patchly_wasm_bg.wasm",
+    "patchly_wasm.js",
+    "patchly_wasm.d.ts"
+  ],
+  "main": "patchly_wasm.js",
+  "types": "patchly_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

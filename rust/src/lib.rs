@@ -154,7 +154,7 @@ pub struct PatchApplier {
 #[wasm_bindgen]
 impl PatchApplier {
     /// Create a new PatchApplier
-    #[wasm_bindgen]
+    #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self {
             source_buffer: ChunkBuffer::new(),
