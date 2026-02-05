@@ -79,6 +79,13 @@ async function createPatch(sourceFile: File, targetFile: File, outputName: strin
       });
     });
 
+    // Check if files are identical
+    if (builder.are_files_identical()) {
+      builder.reset();
+      send({ type: 'identical' });
+      return;
+    }
+
     // Generate patch
     send({ type: 'progress', stage: 'Generating patch', percent: 50 });
     const patchData = builder.finalize();

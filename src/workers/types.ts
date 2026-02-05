@@ -10,6 +10,7 @@ export type WorkerResponse =
   | { type: 'progress'; stage: string; percent: number; detail?: string }
   | { type: 'complete'; outputName: string; size: number }
   | { type: 'error'; message: string }
+  | { type: 'identical' }
   | { type: 'version'; version: string }
   | { type: 'hash'; hash: string };
 

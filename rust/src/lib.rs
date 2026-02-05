@@ -123,6 +123,16 @@ impl PatchBuilder {
         )
     }
 
+    /// Check if source and target files are indentical.
+    /// Files are identical if both size AND hash match
+    #[wasm_bindgen]
+    pub fn are_files_identical(&self) -> bool {
+        let same_size = self.source_buffer.total_size() == self.target_buffer.total_size();
+        let same_hash = self.source_hasher.finalize() == self.target_hasher.finalize();
+
+        same_size && same_hash
+    }
+
     /// Reset the builder for reuse.
     #[wasm_bindgen]
     pub fn reset(&mut self) {
@@ -390,6 +400,42 @@ pub fn hash_data(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_identical_files_detection() {
+        let data = b"identical content here";
+
+        let mut builder = PatchBuilder::new();
+        builder.add_source_chunk(data);
+        builder.add_target_chunk(data);
+
+        assert!(builder.are_files_identical());
+    }
+
+    #[test]
+    fn test_different_files_detection() {
+        let source = b"original content";
+        let target = b"modified content";
+
+        let mut builder = PatchBuilder::new();
+        builder.add_source_chunk(source);
+        builder.add_target_chunk(target);
+
+        assert!(!builder.are_files_identical());
+    }
+
+    #[test]
+    fn test_same_size_different_content() {
+        let source = b"aaaa";
+        let target = b"bbbb";
+
+        let mut builder = PatchBuilder::new();
+        builder.add_source_chunk(source);
+        builder.add_target_chunk(target);
+
+        // Same size but different content = not identical
+        assert!(!builder.are_files_identical());
+    }
 
     #[test]
     fn test_patch_applier_streaming_output() {

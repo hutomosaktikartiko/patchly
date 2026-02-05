@@ -11,6 +11,7 @@ export const patchbuilder_target_size: (a: number) => number;
 export const patchbuilder_progress: (a: number, b: number, c: number) => number;
 export const patchbuilder_finalize: (a: number) => [number, number, number, number];
 export const patchbuilder_get_preview_info: (a: number) => [number, number];
+export const patchbuilder_are_files_identical: (a: number) => number;
 export const patchbuilder_reset: (a: number) => void;
 export const __wbg_patchapplier_free: (a: number, b: number) => void;
 export const patchapplier_new: () => number;

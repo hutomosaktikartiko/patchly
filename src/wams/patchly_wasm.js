@@ -222,6 +222,15 @@ export class PatchBuilder {
         wasm.patchbuilder_add_target_chunk(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Check if source and target files are indentical.
+     * Files are identical if both size AND hash match
+     * @returns {boolean}
+     */
+    are_files_identical() {
+        const ret = wasm.patchbuilder_are_files_identical(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
      * Finalize and generate the patch.
      * returns serialized patch data.
      * @returns {Uint8Array}

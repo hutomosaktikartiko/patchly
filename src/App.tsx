@@ -52,6 +52,12 @@ function App() {
         setStatus("error");
         setError(message);
         addLog(`ERROR: ${message}`);
+      },
+      // on identical
+      () => {
+        setStatus("error");
+        setError("Source and target file are identical. No patch needed");
+        addLog("Files are identical - no patch created");
       }
     );
 

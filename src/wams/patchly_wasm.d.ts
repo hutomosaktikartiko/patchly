@@ -92,6 +92,11 @@ export class PatchBuilder {
      */
     add_target_chunk(chunk: Uint8Array): void;
     /**
+     * Check if source and target files are indentical.
+     * Files are identical if both size AND hash match
+     */
+    are_files_identical(): boolean;
+    /**
      * Finalize and generate the patch.
      * returns serialized patch data.
      */
@@ -152,6 +157,7 @@ export interface InitOutput {
     readonly patchbuilder_progress: (a: number, b: number, c: number) => number;
     readonly patchbuilder_finalize: (a: number) => [number, number, number, number];
     readonly patchbuilder_get_preview_info: (a: number) => [number, number];
+    readonly patchbuilder_are_files_identical: (a: number) => number;
     readonly patchbuilder_reset: (a: number) => void;
     readonly __wbg_patchapplier_free: (a: number, b: number) => void;
     readonly patchapplier_new: () => number;

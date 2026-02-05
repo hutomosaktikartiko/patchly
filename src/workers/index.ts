@@ -6,6 +6,7 @@ export class PatchlyWorker {
   private onProgress?: ProgressCallback;
   private onComplete?: CompleteCallback;
   private onError?: ErrorCallback;
+  private onIdentical?: () => void;
   private readyPromise: Promise<void>;
   private readyResolve?: () => void;
 
@@ -45,6 +46,9 @@ export class PatchlyWorker {
       case 'error':
         this.onError?.(msg.message);
         break;
+      case 'identical':
+        this.onIdentical?.();
+        break;
       case 'version':
         console.log('Pathly WASM version:', msg.version);
         break;
@@ -62,10 +66,12 @@ export class PatchlyWorker {
     onProgress?: ProgressCallback,
     onComplete?: CompleteCallback,
     onError?: ErrorCallback,
+    onIdentical?: () => void,
   ) {
     this.onProgress = onProgress;
     this.onComplete = onComplete;
     this.onError = onError;
+    this.onIdentical = onIdentical;
   }
 
   createPatch(sourceFile: File, targetFile: File, outputName: string) {
