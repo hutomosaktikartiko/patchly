@@ -17,6 +17,7 @@ pub struct StreamingDiff {
     // Current position in target
     target_position: usize,
     // Source file size (for COPY validation)
+    #[allow(dead_code)]
     source_size: u64,
 }
 
