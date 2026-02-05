@@ -101,10 +101,10 @@ export async function downloadFromOpfs(fileName: string): Promise<void> {
 
   // Create download link
   const url = URL.createObjectURL(file);
-  const a = document.createElement('a');
+  const a = document.createElement("a");
   a.href = url;
   a.download = fileName;
-  document.body.appendChild(a);
+  a.click();
   URL.revokeObjectURL(url);
 }
 
