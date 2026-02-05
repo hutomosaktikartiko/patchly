@@ -100,7 +100,7 @@ impl PatchBuilder {
             &mut self.source_index,
             BlockIndex::with_block_size(self.chunk_size),
         );
-        self.diff = Some(StreamingDiff::new(index, self.source_size));
+        self.diff = Some(StreamingDiff::new(index));
         self.source_finalized = true;
     }
 

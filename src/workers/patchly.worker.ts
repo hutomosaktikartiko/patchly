@@ -3,9 +3,6 @@ import { createOpfsFile } from '../utils/opfs';
 import init, {PatchBuilder, PatchApplier, version, hash_data} from '../wams/patchly_wasm.js';
 import type { WorkerMessage, WorkerResponse } from './types';
 
-// Chunk size for reading files (1MB)
-// const READ_CHUNK_SIZE = 1024 * 1024;
-
 // Chunk size for writing to OPFS (1MB)
 const WRITE_CHUNK_SIZE = 1024 * 1024;
 
@@ -51,31 +48,31 @@ async function readFileChunked(
 async function createPatch(sourceFile: File, targetFile: File, outputName: string) {
   try {
     const builder = new PatchBuilder();
-    const totalSize = sourceFile.size + targetFile.size;
-    let processedSize = 0;
 
-    // Read source file
-    send({ type: 'progress', stage: 'Reading source file', percent: 0 });
+    // Read and index source file
+    send({ type: 'progress', stage: 'Indexing source', percent: 0 });
     await readFileChunked(sourceFile, (chunk) => {
       builder.add_source_chunk(chunk);
-      processedSize += chunk.length;
       send({
         type: 'progress',
-        stage: 'Reading files',
-        percent: (processedSize / totalSize) * 50,
-        detail: `Source: ${formatBytes(builder.source_size())}` 
+        stage: 'Indexing source',
+        percent: (builder.source_size() / sourceFile.size) * 40,
+        detail: formatBytes(builder.source_size()) 
       });
     });
 
-    // Read target file
+    // Finalize source
+    builder.finalize_source();
+    send({ type: 'progress', stage: 'Source indexed', percent: 40 });
+
+    // Read target and generate diff on-the-fly
     await readFileChunked(targetFile, (chunk) => {
       builder.add_target_chunk(chunk);
-      processedSize += chunk.length;
       send({
         type: 'progress',
-        stage: 'Reading files',
-        percent: (processedSize / totalSize) * 50,
-        detail: `Target: ${formatBytes(builder.target_size())}`
+        stage: 'Processing target',
+        percent: 40 + (builder.target_size() / targetFile.size) * 40,
+        detail: formatBytes(builder.target_size())
       });
     });
 
@@ -86,12 +83,12 @@ async function createPatch(sourceFile: File, targetFile: File, outputName: strin
       return;
     }
 
-    // Generate patch
-    send({ type: 'progress', stage: 'Generating patch', percent: 50 });
+    // Finalize and serialize patch
+    send({ type: 'progress', stage: 'Generating patch', percent: 80 });
     const patchData = builder.finalize();
 
     // Write patch to OPFS
-    send({ type: 'progress', stage: 'Writing patch', percent: 75 });
+    send({ type: 'progress', stage: 'Writing patch', percent: 90 });
     const writable = await createOpfsFile(outputName);
     await writable.write(patchData as Uint8Array<ArrayBuffer>);
     await writable.close();
@@ -157,7 +154,7 @@ async function applyPatch(sourceFile: File, patchFile: File, outputName: string)
     }
 
     // Read source file
-    send({ type: 'progress', stage: 'Reading source file', percent: 10 });
+    send({ type: 'progress', stage: 'Reading source', percent: 10 });
     await readFileChunked(sourceFile, (chunk) => {
       applier.add_source_chunk(chunk);
       const percent = 10 + (applier.source_size() / sourceFile.size) * 30;

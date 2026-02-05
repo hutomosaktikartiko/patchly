@@ -121,15 +121,6 @@ export class PatchApplier {
         }
     }
     /**
-     * Get progress as percentage (0-100)
-     * @param {number} source_expected
-     * @returns {number}
-     */
-    progress(source_expected) {
-        const ret = wasm.patchapplier_progress(this.__wbg_ptr, source_expected);
-        return ret;
-    }
-    /**
      * Get remaining bytes to output
      * @returns {number}
      */
@@ -183,7 +174,17 @@ export class PatchApplier {
 if (Symbol.dispose) PatchApplier.prototype[Symbol.dispose] = PatchApplier.prototype.free;
 
 /**
- * Builder for creating patches from streamed file chunks.
+ * Streaming patch build
+ *
+ * # Memory Usage
+ * - Source: O(blocks) - use BlockIndex
+ * - Target: Processed incrementally via StreamingDiff
+ *
+ * # Usage Flow
+ * 1. Call add_source_chunk() for all source data
+ * 2. Call finalize_source() when done with source
+ * 3. Call add_target_chunk() for all target data
+ * 4. Call finalize() to get the patch
  */
 export class PatchBuilder {
     static __wrap(ptr) {
@@ -245,21 +246,10 @@ export class PatchBuilder {
         return v1;
     }
     /**
-     * Get patch info without without full serialization (for perview).
-     * Returns JSON string with stats
-     * @returns {string}
+     * Finalize source processing.
      */
-    get_preview_info() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.patchbuilder_get_preview_info(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+    finalize_source() {
+        wasm.patchbuilder_finalize_source(this.__wbg_ptr);
     }
     /**
      * Create a new PatchBuilder with default chunk size
@@ -272,7 +262,6 @@ export class PatchBuilder {
     }
     /**
      * Get progress as percentage (0-100) based on expected sizes.
-     * Returns source progress if target_expected is 0.
      * @param {number} source_expected
      * @param {number} target_expected
      * @returns {number}

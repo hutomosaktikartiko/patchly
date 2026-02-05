@@ -48,10 +48,6 @@ export class PatchApplier {
      */
     prepare(): void;
     /**
-     * Get progress as percentage (0-100)
-     */
-    progress(source_expected: number): number;
-    /**
      * Get remaining bytes to output
      */
     remaining_output_size(): number;
@@ -78,7 +74,17 @@ export class PatchApplier {
 }
 
 /**
- * Builder for creating patches from streamed file chunks.
+ * Streaming patch build
+ *
+ * # Memory Usage
+ * - Source: O(blocks) - use BlockIndex
+ * - Target: Processed incrementally via StreamingDiff
+ *
+ * # Usage Flow
+ * 1. Call add_source_chunk() for all source data
+ * 2. Call finalize_source() when done with source
+ * 3. Call add_target_chunk() for all target data
+ * 4. Call finalize() to get the patch
  */
 export class PatchBuilder {
     free(): void;
@@ -102,17 +108,15 @@ export class PatchBuilder {
      */
     finalize(): Uint8Array;
     /**
-     * Get patch info without without full serialization (for perview).
-     * Returns JSON string with stats
+     * Finalize source processing.
      */
-    get_preview_info(): string;
+    finalize_source(): void;
     /**
      * Create a new PatchBuilder with default chunk size
      */
     constructor();
     /**
      * Get progress as percentage (0-100) based on expected sizes.
-     * Returns source progress if target_expected is 0.
      */
     progress(source_expected: number, target_expected: number): number;
     /**
@@ -151,13 +155,13 @@ export interface InitOutput {
     readonly patchbuilder_new: () => number;
     readonly patchbuilder_with_chunk_size: (a: number) => number;
     readonly patchbuilder_add_source_chunk: (a: number, b: number, c: number) => void;
+    readonly patchbuilder_finalize_source: (a: number) => void;
     readonly patchbuilder_add_target_chunk: (a: number, b: number, c: number) => void;
     readonly patchbuilder_source_size: (a: number) => number;
     readonly patchbuilder_target_size: (a: number) => number;
-    readonly patchbuilder_progress: (a: number, b: number, c: number) => number;
-    readonly patchbuilder_finalize: (a: number) => [number, number, number, number];
-    readonly patchbuilder_get_preview_info: (a: number) => [number, number];
     readonly patchbuilder_are_files_identical: (a: number) => number;
+    readonly patchbuilder_finalize: (a: number) => [number, number, number, number];
+    readonly patchbuilder_progress: (a: number, b: number, c: number) => number;
     readonly patchbuilder_reset: (a: number) => void;
     readonly __wbg_patchapplier_free: (a: number, b: number) => void;
     readonly patchapplier_new: () => number;
@@ -165,11 +169,9 @@ export interface InitOutput {
     readonly patchapplier_set_patch: (a: number, b: number, c: number) => void;
     readonly patchapplier_source_size: (a: number) => number;
     readonly patchapplier_is_patch_loaded: (a: number) => number;
-    readonly patchapplier_progress: (a: number, b: number) => number;
     readonly patchapplier_validate_source: (a: number) => [number, number, number];
     readonly patchapplier_expected_source_size: (a: number) => [bigint, number, number];
     readonly patchapplier_expected_target_size: (a: number) => [bigint, number, number];
-    readonly patchapplier_get_patch_info: (a: number) => [number, number, number, number];
     readonly patchapplier_prepare: (a: number) => [number, number];
     readonly patchapplier_has_more_output: (a: number) => number;
     readonly patchapplier_output_progress: (a: number) => number;
@@ -177,6 +179,7 @@ export interface InitOutput {
     readonly patchapplier_total_output_size: (a: number) => number;
     readonly patchapplier_remaining_output_size: (a: number) => number;
     readonly patchapplier_reset: (a: number) => void;
+    readonly patchapplier_get_patch_info: (a: number) => [number, number, number, number];
     readonly version: () => [number, number];
     readonly hash_data: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
