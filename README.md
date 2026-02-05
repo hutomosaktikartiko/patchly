@@ -127,92 +127,103 @@ patchly/
 ### Generate Patch
 
 ```text
-User selects old file
+App initialized Web Worker + WASM
   ↓
-User selects new file
+User selects source file (old version)
   ↓
-Web Worker loads Rust WASM
+User selects target file (new version)
   ↓
-File is read in chunks (1 MB)
+Files are read in streaming chunks
   ↓
-Rush compares binary chunks
+Check is files are identical (skip if same)
   ↓
-Patch intructions are generated
+Rush compares binary chunks using rolling hash
   ↓
-Patch file (.patch) is downloaded
+Patch instructions (COPY/INSERT) are generated
+  ↓
+Patch is written to OPFS storage
+  ↓
+User dodnloads patch file (.patch)
 ```
 
 ### Apply Patch
 
 ```text
-User selects old file
+User selects source file (original file)
   ↓
-User selects patch file
+User selects patch file (.patch)
   ↓
-Web Worker loads Rust WASM
+Patch metadata is validated
+  ↓
+Source file size is checked against patch header
+  ↓
+Source file is read and hash validated
   ↓
 Patch instructions are applied
   ↓
-New file is constructed
+Output is streamed to OPFS storage
   ↓
-Result file is downloaded
+User downloads reconstructured file
 ```
 
 ## Feature Checklist
 
 ### Core Functionality
 
-- [] Select old file
-- [] Select new file
-- [] Generate patch file
-- [] Download patch file
-- [] Apply patch to old file
-- [] Download reconstructed file
-- [] Byte-for-byte output verification
+- [x] Select old file
+- [x] Select new file
+- [x] Generate patch file
+- [x] Download patch file
+- [x] Apply patch to old file
+- [x] Download reconstructed file
+- [x] Byte-for-byte output verification
 
 ### Diff Engine
 
-- [] Chunk-based file reading
-- [] Rolling hash implementation
-- [] Binary block matching
-- [] Insert/copy patch instructions
-- [] Deterministic patch output
-- [] Buffer utilities for chunked processing
+- [x] Chunk-based file reading
+- [x] Rolling hash implementation
+- [x] Binary block matching
+- [x] Insert/copy patch instructions
+- [x] Deterministic patch output
+- [x] Buffer utilities for chunked processing
 
 ### Web Worker
 
-- [] Worker setup
-- [] WASM loading inside worker
-- [] Main thread ↔ Worker messaging
-- [] Progress reporting
-- [] Auto-cancel on reload / close
+- [x] Worker setup
+- [x] WASM loading inside worker
+- [x] Main thread ↔ Worker messaging
+- [x] Progress reporting
+- [x] Auto-cancel on reload / close
 
 ### Performance Optimization
 
-- [] Streaming input processing
-- [] Chunk-based diffing
-- [] Streaming output to disk (OPFS)
-- [] Transferable buffers (zero-copy)
-- [] ChunkBuffer for memory-efficient processing
+- [x] Streaming input processing
+- [x] Chunk-based diffing
+- [x] Streaming output to disk (OPFS)
+- [x] Transferable buffers (zero-copy)
+- [x] ChunkBuffer for memory-efficient processing
+- [ ] True streaming architecture for GB-scale files
+- [ ] Stream source to block index only
+- [ ] Stream target directly to patch instructions
+- [ ] Stream patch output directly to OPFS
+- [ ] Remove WASM memory limit dependency
 
 ### Safety & Validation
 
-- [] Old file hash verification before patch apply
-- [] Patch format validation
-- [] Mismatch detection (wrong based file)
-- [] Corrupted patch detection
+- [x] Old file hash verification before patch apply
+- [x] Patch format validation
+- [x] Mismatch detection (wrong based file)
+- [x] Corrupted patch detection
 
 ### UI/UX
 
-- [] File picker
-- [] Mode selector (Generate / Apply)
-- [] Progress bar
-- [] Error messages
-- [] Patch size vs full size comparison
+- [x] File picker
+- [x] Mode selector (Generate / Apply)
+- [x] Progress bar
+- [x] Error messages
+- [x] Patch size vs full size comparison
 
 ### Build & Deploy
 
-- [] Vite + WASM integration
-- [] Bun-based local dev
-- [] Production build
+- [x] Vite + WASM integration
 - [] Deploy to Cloudflare Pages
