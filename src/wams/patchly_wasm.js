@@ -68,7 +68,7 @@ export class PatchApplier {
         }
     }
     /**
-     * Check if there's more output to read
+     * Check if there's more output to read.
      * @returns {boolean}
      */
     has_more_output() {
@@ -93,23 +93,15 @@ export class PatchApplier {
         return this;
     }
     /**
-     * Get next chunk of output for streaming to OPFS.
-     * @param {number} max_chunk_size
+     * Get next chunk of output data.
+     * @param {number} max_size
      * @returns {Uint8Array}
      */
-    next_output_chunk(max_chunk_size) {
-        const ret = wasm.patchapplier_next_output_chunk(this.__wbg_ptr, max_chunk_size);
+    next_output_chunk(max_size) {
+        const ret = wasm.patchapplier_next_output_chunk(this.__wbg_ptr, max_size);
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
-    }
-    /**
-     * Get output progress as percentage (0-100).
-     * @returns {number}
-     */
-    output_progress() {
-        const ret = wasm.patchapplier_output_progress(this.__wbg_ptr);
-        return ret;
     }
     /**
      * Prepare for streaming output.
@@ -122,11 +114,11 @@ export class PatchApplier {
     }
     /**
      * Get remaining bytes to output
-     * @returns {number}
+     * @returns {bigint}
      */
     remaining_output_size() {
         const ret = wasm.patchapplier_remaining_output_size(this.__wbg_ptr);
-        return ret >>> 0;
+        return BigInt.asUintN(64, ret);
     }
     /**
      * Reset the applier for reuse.
@@ -149,14 +141,6 @@ export class PatchApplier {
      */
     source_size() {
         const ret = wasm.patchapplier_source_size(this.__wbg_ptr);
-        return ret >>> 0;
-    }
-    /**
-     * Get total output size
-     * @returns {number}
-     */
-    total_output_size() {
-        const ret = wasm.patchapplier_total_output_size(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**

@@ -9,9 +9,8 @@ pub mod utils;
 use wasm_bindgen::prelude::*;
 
 use crate::diff::block_index::BlockIndex;
-use crate::diff::patch::apply_patch;
 use crate::diff::streaming_diff::StreamingDiff;
-use crate::format::patch_format::{calculate_hash, HashBuilder, Patch};
+use crate::format::patch_format::{calculate_hash, HashBuilder, Instruction, Patch};
 use crate::utils::buffer::ChunkBuffer;
 
 /// Default chunk size for diff matching (4KB)
@@ -206,12 +205,27 @@ impl Default for PatchBuilder {
 /// Applier for pacthes with streaming output supoort.
 #[wasm_bindgen]
 pub struct PatchApplier {
+    // Buffer for source file chunks
     source_buffer: ChunkBuffer,
+    // Merged source data
+    source_data: Vec<u8>,
+    // Hash builder for source verification
     source_hasher: HashBuilder,
+    // Patch data
     patch_data: Vec<u8>,
+    // Whether patch has been loaded
     patch_loaded: bool,
-    output_buffer: Option<Vec<u8>>,
-    output_position: usize,
+    // Parsed instructions
+    instructions: Vec<Instruction>,
+    // Current instruction index
+    current_instruction: usize,
+    // Offset within current instruction
+    instruction_offset: usize,
+    // Total bytes written so far
+    output_written: u64,
+    // Expected target size
+    target_size: u64,
+    // Whether prepare has been called
     prepared: bool,
 }
 
@@ -222,11 +236,15 @@ impl PatchApplier {
     pub fn new() -> Self {
         Self {
             source_buffer: ChunkBuffer::new(),
+            source_data: Vec::new(),
             source_hasher: HashBuilder::new(),
             patch_data: Vec::new(),
             patch_loaded: false,
-            output_buffer: None,
-            output_position: 0,
+            instructions: Vec::new(),
+            current_instruction: 0,
+            instruction_offset: 0,
+            output_written: 0,
+            target_size: 0,
             prepared: false,
         }
     }
@@ -309,91 +327,141 @@ impl PatchApplier {
             return Err(JsError::new("Patch not loaded"));
         }
 
-        let source = self.source_buffer.merge();
+        // Merge source chunks into single buffer for random access
+        self.source_data = self.source_buffer.merge();
+
+        // Parse patch to get instructions
         let patch = Patch::deserialize(&self.patch_data)
             .map_err(|e| JsError::new(&format!("Invalid patch: {}", e)))?;
 
-        let output = apply_patch(&source, &patch)
-            .map_err(|e| JsError::new(&format!("Apply error: {}", e)))?;
-
-        self.output_buffer = Some(output);
-        self.output_position = 0;
+        // Store instructions and metadata
+        self.instructions = patch.instructions;
+        self.target_size = patch.target_size;
+        self.current_instruction = 0;
+        self.instruction_offset = 0;
+        self.output_written = 0;
         self.prepared = true;
 
         Ok(())
     }
 
-    /// Check if there's more output to read
+    /// Check if there's more output to read.
     #[wasm_bindgen]
     pub fn has_more_output(&self) -> bool {
-        match &self.output_buffer {
-            Some(buf) => self.output_position < buf.len(),
-            None => false,
+        if !self.prepared {
+            return false;
         }
+
+        self.current_instruction < self.instructions.len()
     }
 
-    /// Get output progress as percentage (0-100).
+    // /// Get output progress as percentage (0-100).
+    // #[wasm_bindgen]
+    // pub fn output_progress(&self) -> f64 {
+    //     match &self.output_buffer {
+    //         Some(buf) if !buf.is_empty() => {
+    //             (self.output_position as f64 / buf.len() as f64 * 100.0).min(100.0)
+    //         }
+    //         _ => 0.0,
+    //     }
+    // }
+
+    /// Get next chunk of output data.
     #[wasm_bindgen]
-    pub fn output_progress(&self) -> f64 {
-        match &self.output_buffer {
-            Some(buf) if !buf.is_empty() => {
-                (self.output_position as f64 / buf.len() as f64 * 100.0).min(100.0)
-            }
-            _ => 0.0,
+    pub fn next_output_chunk(&mut self, max_size: usize) -> Vec<u8> {
+        if !self.prepared || self.current_instruction >= self.instructions.len() {
+            return Vec::new();
         }
-    }
 
-    /// Get next chunk of output for streaming to OPFS.
-    #[wasm_bindgen]
-    pub fn next_output_chunk(&mut self, max_chunk_size: usize) -> Vec<u8> {
-        let chunk_size = if max_chunk_size == 0 {
-            DEFAULT_OUTPUT_CHUNK_SIZE
-        } else {
-            max_chunk_size
-        };
+        let mut result = Vec::with_capacity(max_size);
 
-        match &self.output_buffer {
-            Some(buf) => {
-                if self.output_position > buf.len() {
-                    return Vec::new();
+        while result.len() < max_size && self.current_instruction < self.instructions.len() {
+            let instruction = &self.instructions[self.current_instruction];
+
+            match instruction {
+                Instruction::Copy { offset, length } => {
+                    let offset = *offset as usize;
+                    let length = *length as usize;
+
+                    // Calculate how much of this Copy we still need to output
+                    let remaining_in_instruction = length - self.instruction_offset;
+                    let space_in_result = max_size - result.len();
+                    let bytes_to_copy = remaining_in_instruction.min(space_in_result);
+
+                    // Copy from source
+                    let start = offset + self.instruction_offset;
+                    let end = start + bytes_to_copy;
+
+                    if end <= self.source_data.len() {
+                        result.extend_from_slice(&self.source_data[start..end]);
+                    }
+
+                    self.instruction_offset += bytes_to_copy;
+
+                    // Move to next instruction if this one is complete
+                    if self.instruction_offset >= length {
+                        self.current_instruction += 1;
+                        self.instruction_offset = 0;
+                    }
                 }
+                Instruction::Insert { data } => {
+                    // Calculate how much of this Insert we still need to output
+                    let remaining_in_instruction = data.len() - self.instruction_offset;
+                    let space_in_result = max_size - result.len();
+                    let bytes_to_copy = remaining_in_instruction.min(space_in_result);
 
-                let end = (self.output_position + chunk_size).min(buf.len());
-                let chunk = buf[self.output_position..end].to_vec();
-                self.output_position = end;
-                chunk
+                    // Copy from insert data
+                    let start = self.instruction_offset;
+                    let end = start + bytes_to_copy;
+                    result.extend_from_slice(&data[start..end]);
+
+                    self.instruction_offset += bytes_to_copy;
+
+                    // Move to next instruction if this one is complete
+                    if self.instruction_offset >= data.len() {
+                        self.current_instruction += 1;
+                        self.instruction_offset = 0;
+                    }
+                }
             }
-            None => Vec::new(),
         }
+
+        self.output_written += result.len() as u64;
+        result
     }
 
-    /// Get total output size
-    #[wasm_bindgen]
-    pub fn total_output_size(&self) -> usize {
-        match &self.output_buffer {
-            Some(buf) => buf.len(),
-            None => 0,
-        }
-    }
+    // /// Get total output size
+    // #[wasm_bindgen]
+    // pub fn total_output_size(&self) -> usize {
+    //     match &self.output_buffer {
+    //         Some(buf) => buf.len(),
+    //         None => 0,
+    //     }
+    // }
 
     /// Get remaining bytes to output
     #[wasm_bindgen]
-    pub fn remaining_output_size(&self) -> usize {
-        match &self.output_buffer {
-            Some(buf) => buf.len().saturating_sub(self.output_position),
-            None => 0,
+    pub fn remaining_output_size(&self) -> u64 {
+        if !self.prepared || self.target_size == 0 {
+            return 0;
         }
+
+        self.target_size.saturating_sub(self.output_written)
     }
 
     /// Reset the applier for reuse.
     #[wasm_bindgen]
     pub fn reset(&mut self) {
         self.source_buffer.clear();
+        self.source_data.clear();
         self.source_hasher = HashBuilder::new();
         self.patch_data.clear();
         self.patch_loaded = false;
-        self.output_buffer = None;
-        self.output_position = 0;
+        self.instructions.clear();
+        self.current_instruction = 0;
+        self.instruction_offset = 0;
+        self.output_written = 0;
+        self.target_size = 0;
         self.prepared = false;
     }
 

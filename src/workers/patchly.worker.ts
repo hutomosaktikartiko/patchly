@@ -194,7 +194,7 @@ async function applyPatch(sourceFile: File, patchFile: File, outputName: string)
           type: 'progress',
           stage: 'Writing output',
           percent: 50 + percent * 0.5,
-          detail: `${formatBytes(expectedTargetSize - applier.remaining_output_size())} / ${formatBytes(expectedTargetSize)}`
+          detail: `${formatBytes(expectedTargetSize - Number(applier.remaining_output_size()))} / ${formatBytes(expectedTargetSize)}`
         })
       }
     )

@@ -24,7 +24,7 @@ export class PatchApplier {
      */
     get_patch_info(): string;
     /**
-     * Check if there's more output to read
+     * Check if there's more output to read.
      */
     has_more_output(): boolean;
     /**
@@ -36,13 +36,9 @@ export class PatchApplier {
      */
     constructor();
     /**
-     * Get next chunk of output for streaming to OPFS.
+     * Get next chunk of output data.
      */
-    next_output_chunk(max_chunk_size: number): Uint8Array;
-    /**
-     * Get output progress as percentage (0-100).
-     */
-    output_progress(): number;
+    next_output_chunk(max_size: number): Uint8Array;
     /**
      * Prepare for streaming output.
      */
@@ -50,7 +46,7 @@ export class PatchApplier {
     /**
      * Get remaining bytes to output
      */
-    remaining_output_size(): number;
+    remaining_output_size(): bigint;
     /**
      * Reset the applier for reuse.
      */
@@ -63,10 +59,6 @@ export class PatchApplier {
      * Get current source size.
      */
     source_size(): number;
-    /**
-     * Get total output size
-     */
-    total_output_size(): number;
     /**
      * Validate source file before applying.
      */
@@ -174,10 +166,8 @@ export interface InitOutput {
     readonly patchapplier_expected_target_size: (a: number) => [bigint, number, number];
     readonly patchapplier_prepare: (a: number) => [number, number];
     readonly patchapplier_has_more_output: (a: number) => number;
-    readonly patchapplier_output_progress: (a: number) => number;
     readonly patchapplier_next_output_chunk: (a: number, b: number) => [number, number];
-    readonly patchapplier_total_output_size: (a: number) => number;
-    readonly patchapplier_remaining_output_size: (a: number) => number;
+    readonly patchapplier_remaining_output_size: (a: number) => bigint;
     readonly patchapplier_reset: (a: number) => void;
     readonly patchapplier_get_patch_info: (a: number) => [number, number, number, number];
     readonly version: () => [number, number];
