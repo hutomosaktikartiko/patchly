@@ -8,6 +8,10 @@ export class PatchApplier {
     free(): void;
     [Symbol.dispose](): void;
     /**
+     * Add a chunk of patch data.
+     */
+    add_patch_chunk(chunk: Uint8Array): void;
+    /**
      * Add a chunk of source (old file) data.
      */
     add_source_chunk(chunk: Uint8Array): void;
@@ -19,6 +23,10 @@ export class PatchApplier {
      * Get expected target size from patch metadata.
      */
     expected_target_size(): bigint;
+    /**
+     * Finalize patch loading and parse header.
+     */
+    finalize_patch(): void;
     /**
      * Check if there's more output to read.
      */
@@ -59,17 +67,6 @@ export class PatchApplier {
 
 /**
  * Streaming patch build
- *
- * # Memory Usage
- * - Source: O(blocks) - use BlockIndex
- * - Target: Processed incrementally via StreamingDiff
- *
- * # Usage Flow
- * 1. Call add_source_chunk() for all source data
- * 2. Call finalize_source() when done with source
- * 3. Call add_target_chunk() for all target data
- * 4. Call prepare_patch() to prepare for streaming output
- * 5. Call next_patch_chunk() repeatedly until has_more_patch() returns false
  */
 export class PatchBuilder {
     free(): void;
@@ -111,7 +108,7 @@ export class PatchBuilder {
      */
     constructor();
     /**
-     * Get approximate pending output size (for progress calculation).
+     * Get approximate pending output size
      */
     pending_output_size(): number;
     /**
@@ -172,6 +169,8 @@ export interface InitOutput {
     readonly patchapplier_prepare: (a: number) => [number, number];
     readonly patchapplier_has_more_output: (a: number) => number;
     readonly patchapplier_next_output_chunk: (a: number, b: number) => [number, number];
+    readonly patchapplier_add_patch_chunk: (a: number, b: number, c: number) => void;
+    readonly patchapplier_finalize_patch: (a: number) => [number, number];
     readonly patchapplier_remaining_output_size: (a: number) => bigint;
     readonly patchapplier_reset: (a: number) => void;
     readonly version: () => [number, number];

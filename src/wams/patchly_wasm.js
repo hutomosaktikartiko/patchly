@@ -15,6 +15,15 @@ export class PatchApplier {
         wasm.__wbg_patchapplier_free(ptr, 0);
     }
     /**
+     * Add a chunk of patch data.
+     * @param {Uint8Array} chunk
+     */
+    add_patch_chunk(chunk) {
+        const ptr0 = passArray8ToWasm0(chunk, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.patchapplier_add_patch_chunk(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
      * Add a chunk of source (old file) data.
      * @param {Uint8Array} chunk
      */
@@ -44,6 +53,15 @@ export class PatchApplier {
             throw takeFromExternrefTable0(ret[1]);
         }
         return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * Finalize patch loading and parse header.
+     */
+    finalize_patch() {
+        const ret = wasm.patchapplier_finalize_patch(this.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
     }
     /**
      * Check if there's more output to read.
@@ -129,17 +147,6 @@ if (Symbol.dispose) PatchApplier.prototype[Symbol.dispose] = PatchApplier.protot
 
 /**
  * Streaming patch build
- *
- * # Memory Usage
- * - Source: O(blocks) - use BlockIndex
- * - Target: Processed incrementally via StreamingDiff
- *
- * # Usage Flow
- * 1. Call add_source_chunk() for all source data
- * 2. Call finalize_source() when done with source
- * 3. Call add_target_chunk() for all target data
- * 4. Call prepare_patch() to prepare for streaming output
- * 5. Call next_patch_chunk() repeatedly until has_more_patch() returns false
  */
 export class PatchBuilder {
     __destroy_into_raw() {
@@ -223,7 +230,7 @@ export class PatchBuilder {
         return this;
     }
     /**
-     * Get approximate pending output size (for progress calculation).
+     * Get approximate pending output size
      * @returns {number}
      */
     pending_output_size() {

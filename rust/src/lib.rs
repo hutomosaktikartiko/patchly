@@ -10,7 +10,9 @@ use wasm_bindgen::prelude::*;
 
 use crate::diff::block_index::BlockIndex;
 use crate::diff::streaming_diff::StreamingDiff;
-use crate::format::patch_format::{calculate_hash, HashBuilder, Instruction, Patch};
+use crate::format::patch_format::{
+    calculate_hash, HashBuilder, ParsedInstruction, Patch, PatchMetadata,
+};
 use crate::utils::buffer::ChunkBuffer;
 
 /// Default chunk size for diff matching (4KB)
@@ -242,10 +244,8 @@ impl Default for PatchBuilder {
 /// Applier for pacthes with streaming output supoort.
 #[wasm_bindgen]
 pub struct PatchApplier {
-    // Buffer for source file chunks
+    // Buffer for source file chunks (used directly for random access, no merge needed)
     source_buffer: ChunkBuffer,
-    // Merged source data
-    source_data: Vec<u8>,
     // Hash builder for source verification
     source_hasher: HashBuilder,
     // Patch data
@@ -253,7 +253,7 @@ pub struct PatchApplier {
     // Whether patch has been loaded
     patch_loaded: bool,
     // Parsed instructions
-    instructions: Vec<Instruction>,
+    instructions: Vec<ParsedInstruction>,
     // Current instruction index
     current_instruction: usize,
     // Offset within current instruction
@@ -273,7 +273,6 @@ impl PatchApplier {
     pub fn new() -> Self {
         Self {
             source_buffer: ChunkBuffer::new(),
-            source_data: Vec::new(),
             source_hasher: HashBuilder::new(),
             patch_data: Vec::new(),
             patch_loaded: false,
@@ -358,11 +357,11 @@ impl PatchApplier {
             return Err(JsError::new("Patch not loaded"));
         }
 
-        // Merge source chunks into single buffer for random access
-        self.source_data = self.source_buffer.merge();
+        // No merge needed - use source_buffer directly via read_at()
+        // This avoids doubling memory during the merge step
 
         // Parse patch to get instructions
-        let patch = Patch::deserialize(&self.patch_data)
+        let patch = PatchMetadata::parse(&self.patch_data)
             .map_err(|e| JsError::new(&format!("Invalid patch: {}", e)))?;
 
         // Store instructions and metadata
@@ -399,7 +398,7 @@ impl PatchApplier {
             let instruction = &self.instructions[self.current_instruction];
 
             match instruction {
-                Instruction::Copy { offset, length } => {
+                ParsedInstruction::Copy { offset, length } => {
                     let offset = *offset as usize;
                     let length = *length as usize;
 
@@ -408,12 +407,10 @@ impl PatchApplier {
                     let space_in_result = max_size - result.len();
                     let bytes_to_copy = remaining_in_instruction.min(space_in_result);
 
-                    // Copy from source
+                    // Read from source_buffer using read_at (no merge needed)
                     let start = offset + self.instruction_offset;
-                    let end = start + bytes_to_copy;
-
-                    if end <= self.source_data.len() {
-                        result.extend_from_slice(&self.source_data[start..end]);
+                    if let Some(data) = self.source_buffer.read_at(start, bytes_to_copy) {
+                        result.extend_from_slice(&data);
                     }
 
                     self.instruction_offset += bytes_to_copy;
@@ -424,21 +421,26 @@ impl PatchApplier {
                         self.instruction_offset = 0;
                     }
                 }
-                Instruction::Insert { data } => {
+                ParsedInstruction::Insert {
+                    patch_offset,
+                    length,
+                } => {
+                    let length = *length as usize;
+
                     // Calculate how much of this Insert we still need to output
-                    let remaining_in_instruction = data.len() - self.instruction_offset;
+                    let remaining_in_instruction = length - self.instruction_offset;
                     let space_in_result = max_size - result.len();
                     let bytes_to_copy = remaining_in_instruction.min(space_in_result);
 
-                    // Copy from insert data
-                    let start = self.instruction_offset;
+                    // Read INSERT data directly from patch_data
+                    let start = patch_offset + self.instruction_offset;
                     let end = start + bytes_to_copy;
-                    result.extend_from_slice(&data[start..end]);
+                    result.extend_from_slice(&self.patch_data[start..end]);
 
                     self.instruction_offset += bytes_to_copy;
 
                     // Move to next instruction if this one is complete
-                    if self.instruction_offset >= data.len() {
+                    if self.instruction_offset >= length {
                         self.current_instruction += 1;
                         self.instruction_offset = 0;
                     }
@@ -448,6 +450,22 @@ impl PatchApplier {
 
         self.output_written += result.len() as u64;
         result
+    }
+
+    /// Add a chunk of patch data.
+    #[wasm_bindgen]
+    pub fn add_patch_chunk(&mut self, chunk: &[u8]) {
+        self.patch_data.extend_from_slice(chunk);
+    }
+
+    /// Finalize patch loading and parse header.
+    #[wasm_bindgen]
+    pub fn finalize_patch(&mut self) -> Result<(), JsError> {
+        if self.patch_data.len() < 33 {
+            return Err(JsError::new("Patch data too small"));
+        }
+        self.patch_loaded = true;
+        Ok(())
     }
 
     /// Get remaining bytes to output
@@ -464,11 +482,18 @@ impl PatchApplier {
     #[wasm_bindgen]
     pub fn reset(&mut self) {
         self.source_buffer.clear();
-        self.source_data.clear();
+        self.source_buffer.shrink_to_fit();
+
         self.source_hasher = HashBuilder::new();
+
         self.patch_data.clear();
+        self.patch_data.shrink_to_fit();
+
         self.patch_loaded = false;
+
         self.instructions.clear();
+        self.instructions.shrink_to_fit();
+
         self.current_instruction = 0;
         self.instruction_offset = 0;
         self.output_written = 0;

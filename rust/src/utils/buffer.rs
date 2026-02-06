@@ -73,6 +73,12 @@ impl ChunkBuffer {
         self.total_size = 0;
     }
 
+    /// Release unused capacity to reduce memory footprint.
+    /// Call this after clear() when you want to free memory.
+    pub fn shrink_to_fit(&mut self) {
+        self.chunks.shrink_to_fit();
+    }
+
     /// Read bytes at a specific offset acress chunks.
     ///
     /// # Arguments

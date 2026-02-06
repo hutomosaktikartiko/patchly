@@ -87,8 +87,7 @@ async function createPatch(sourceFile: File, targetFile: File, outputName: strin
         const patchChunk = builder.flush_output(WRITE_CHUNK_SIZE);
         if (patchChunk.length === 0) break;
         
-        const copy = new Uint8Array(patchChunk);
-        await writable.write(new Blob([copy]));
+        await writable.write(new Blob([patchChunk.slice()]));
         totalWritten += patchChunk.length;
       }
 
@@ -119,8 +118,7 @@ async function createPatch(sourceFile: File, targetFile: File, outputName: strin
       const patchChunk = builder.flush_output(WRITE_CHUNK_SIZE);
       if (patchChunk.length === 0) break;
       
-      const copy = new Uint8Array(patchChunk);
-      await writable.write(new Blob([copy]));
+      await writable.write(new Blob([patchChunk.slice()]));
       totalWritten += patchChunk.length;
     }
 
@@ -150,8 +148,7 @@ async function writeToOpfs(
       const chunk = getData();
       if (!chunk || chunk.length === 0) break;
 
-      const copy = new Uint8Array(chunk);
-      await writable.write(new Blob([copy]));
+      await writable.write(new Blob([chunk.slice()], { type: 'application/octet-stream' }));
 
       bytesWritten += chunk.length;
 
@@ -170,9 +167,11 @@ async function applyPatch(sourceFile: File, patchFile: File, outputName: string)
     const applier = new PatchApplier();
 
     // Read patch file first to get expected sizes
-    send({ type: 'progress', stage: 'Reading patch', percent: 0 });
-    const patchData = new Uint8Array(await patchFile.arrayBuffer());
-    applier.set_patch(patchData);
+     send({ type: 'progress', stage: 'Reading patch', percent: 0 });
+    await readFileChunked(patchFile, (chunk) => {
+      applier.add_patch_chunk(chunk);
+    });
+    applier.finalize_patch();
 
     const expectedSourceSize = Number(applier.expected_source_size());
     const expectedTargetSize = Number(applier.expected_target_size());

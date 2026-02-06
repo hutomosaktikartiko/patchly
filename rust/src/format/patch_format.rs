@@ -29,6 +29,154 @@ pub enum Instruction {
     Insert { data: Vec<u8> },
 }
 
+/// Parsed instruction that references data by offset (zero-copy).
+/// Used by PatchApplier to avoid copying INSERT data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParsedInstruction {
+    /// Copy bytes from source file
+    Copy { offset: u64, length: u32 },
+
+    /// Insert new bytes - references position in original patch data.
+    Insert { patch_offset: usize, length: u32 },
+}
+
+/// Patch metadat without instruction data (for zero-copy parsing).
+#[derive(Debug, Clone)]
+pub struct PatchMetadata {
+    pub chunk_size: u32,
+    pub source_size: u64,
+    pub source_hash: u64,
+    pub target_size: u64,
+    pub instructions: Vec<ParsedInstruction>,
+}
+
+impl PatchMetadata {
+    /// Parse patch data without copying INSERT data.
+    /// Returns metadata with instructions that reference the original data.
+    pub fn parse(data: &[u8]) -> io::Result<Self> {
+        let mut cursor = io::Cursor::new(data);
+
+        // Read and verify magic
+        let mut magic = [0u8; 4];
+        cursor.read_exact(&mut magic)?;
+        if &magic != MAGIC {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid patch file: bad magic bytes",
+            ));
+        }
+
+        // Read version
+        let mut version = [0u8; 1];
+        cursor.read_exact(&mut version)?;
+        if version[0] != VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Unsupported patch version: {} (expected {})",
+                    version[0], VERSION
+                ),
+            ));
+        }
+
+        // Read chunk_size
+        let mut chunk_size_bytes = [0u8; 4];
+        cursor.read_exact(&mut chunk_size_bytes)?;
+        let chunk_size = u32::from_le_bytes(chunk_size_bytes);
+
+        // Read source_size
+        let mut source_size_bytes = [0u8; 8];
+        cursor.read_exact(&mut source_size_bytes)?;
+        let source_size = u64::from_le_bytes(source_size_bytes);
+
+        // Read source_hash
+        let mut source_hash_bytes = [0u8; 8];
+        cursor.read_exact(&mut source_hash_bytes)?;
+        let source_hash = u64::from_le_bytes(source_hash_bytes);
+
+        // Read target_size
+        let mut target_size_bytes = [0u8; 8];
+        cursor.read_exact(&mut target_size_bytes)?;
+        let target_size = u64::from_le_bytes(target_size_bytes);
+
+        // Parse instructions WITHOUT copying INSERT data
+        let mut instructions = Vec::new();
+        loop {
+            let mut type_byte = [0u8; 1];
+            match cursor.read_exact(&mut type_byte) {
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e),
+            }
+
+            match type_byte[0] {
+                TYPE_COPY => {
+                    let mut offset_bytes = [0u8; 8];
+                    let mut length_bytes = [0u8; 4];
+                    cursor.read_exact(&mut offset_bytes)?;
+                    cursor.read_exact(&mut length_bytes)?;
+
+                    instructions.push(ParsedInstruction::Copy {
+                        offset: u64::from_le_bytes(offset_bytes),
+                        length: u32::from_le_bytes(length_bytes),
+                    });
+                }
+                TYPE_INSERT => {
+                    let mut length_bytes = [0u8; 4];
+                    cursor.read_exact(&mut length_bytes)?;
+                    let length = u32::from_le_bytes(length_bytes);
+
+                    // Store offset instead of copying data!
+                    let patch_offset = cursor.position() as usize;
+
+                    // Skip over the data (don't read it)
+                    cursor.set_position(cursor.position() + length as u64);
+
+                    instructions.push(ParsedInstruction::Insert {
+                        patch_offset,
+                        length,
+                    });
+                }
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Unknown instruction type: {}", type_byte[0]),
+                    ));
+                }
+            }
+        }
+
+        Ok(Self {
+            chunk_size,
+            source_size,
+            source_hash,
+            target_size,
+            instructions,
+        })
+    }
+
+    /// Validate source file
+    pub fn validate_source(
+        &self,
+        source_size: u64,
+        source_hash: u64,
+    ) -> Result<(), ValidationError> {
+        if source_size != self.source_size {
+            return Err(ValidationError::SizeMismatch {
+                expected: self.source_size,
+                actual: source_size,
+            });
+        }
+        if source_hash != self.source_hash {
+            return Err(ValidationError::HashMismatch {
+                expected: self.source_hash,
+                actual: source_hash,
+            });
+        }
+        Ok(())
+    }
+}
+
 /// Complete patch containing all instructions to transform source -> target.
 #[derive(Debug, Clone)]
 pub struct Patch {
