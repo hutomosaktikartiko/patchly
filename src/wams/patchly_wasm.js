@@ -138,7 +138,8 @@ if (Symbol.dispose) PatchApplier.prototype[Symbol.dispose] = PatchApplier.protot
  * 1. Call add_source_chunk() for all source data
  * 2. Call finalize_source() when done with source
  * 3. Call add_target_chunk() for all target data
- * 4. Call finalize() to get the patch
+ * 4. Call prepare_patch() to prepare for streaming output
+ * 5. Call next_patch_chunk() repeatedly until has_more_patch() returns false
  */
 export class PatchBuilder {
     __destroy_into_raw() {
@@ -162,6 +163,7 @@ export class PatchBuilder {
     }
     /**
      * Add a chunk of target (new file) data.
+     * This immediately generates patch output - call flush_output() to retrieve it.
      * @param {Uint8Array} chunk
      */
     add_target_chunk(chunk) {
@@ -170,8 +172,8 @@ export class PatchBuilder {
         wasm.patchbuilder_add_target_chunk(this.__wbg_ptr, ptr0, len0);
     }
     /**
-     * Check if source and target files are indentical.
-     * Files are identical if both size AND hash match
+     * Check if source and target files are identical.
+     * Only accurate after all data has been processed.
      * @returns {boolean}
      */
     are_files_identical() {
@@ -179,24 +181,37 @@ export class PatchBuilder {
         return ret !== 0;
     }
     /**
-     * Finalize and generate the patch.
-     * returns serialized patch data.
+     * Finalize source processing.
+     */
+    finalize_source() {
+        wasm.patchbuilder_finalize_source(this.__wbg_ptr);
+    }
+    /**
+     * Finalize target processing.
+     * Call this after all target chunks have been added.
+     */
+    finalize_target() {
+        wasm.patchbuilder_finalize_target(this.__wbg_ptr);
+    }
+    /**
+     * Get next chunk of patch output.
+     * Returns serialized patch data ready to write to file.
+     * @param {number} max_size
      * @returns {Uint8Array}
      */
-    finalize() {
-        const ret = wasm.patchbuilder_finalize(this.__wbg_ptr);
-        if (ret[3]) {
-            throw takeFromExternrefTable0(ret[2]);
-        }
+    flush_output(max_size) {
+        const ret = wasm.patchbuilder_flush_output(this.__wbg_ptr, max_size);
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
     }
     /**
-     * Finalize source processing.
+     * Check if there's patch output available to read.
+     * @returns {boolean}
      */
-    finalize_source() {
-        wasm.patchbuilder_finalize_source(this.__wbg_ptr);
+    has_output() {
+        const ret = wasm.patchbuilder_has_output(this.__wbg_ptr);
+        return ret !== 0;
     }
     /**
      * Create a new PatchBuilder with default chunk size
@@ -208,10 +223,26 @@ export class PatchBuilder {
         return this;
     }
     /**
+     * Get approximate pending output size (for progress calculation).
+     * @returns {number}
+     */
+    pending_output_size() {
+        const ret = wasm.patchbuilder_pending_output_size(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * Reset the builder for reuse.
      */
     reset() {
         wasm.patchbuilder_reset(this.__wbg_ptr);
+    }
+    /**
+     * Set the expected total target size.
+     * Must be called before add_target_chunk() for proper header generation.
+     * @param {bigint} size
+     */
+    set_target_size(size) {
+        wasm.patchbuilder_set_target_size(this.__wbg_ptr, size);
     }
     /**
      * Get current source size (bytes received so far).

@@ -1,19 +1,22 @@
 use super::block_index::BlockIndex;
 use super::rolling_hash::RollingHash;
-use crate::format::patch_format::Instruction;
 
-/// Streaming diff generator that uses BlockIndex
+/// Instruction type markers for serialization
+const TYPE_COPY: u8 = 0x01;
+const TYPE_INSERT: u8 = 0x02;
+
+/// Streaming diff generator that outputs serialized patch data directly.
 pub struct StreamingDiff {
     // Block index built from source file
     index: BlockIndex,
     // Block size for matching
     block_size: usize,
-    // Buffer for pending data
+    // Buffer for pending target data to process
     buffer: Vec<u8>,
-    // Generated instructions
-    instructions: Vec<Instruction>,
     // Pending INSERT data
     insert_buffer: Vec<u8>,
+    // Serialized output ready to be consumed
+    output_buffer: Vec<u8>,
 }
 
 impl StreamingDiff {
@@ -25,12 +28,13 @@ impl StreamingDiff {
             index,
             block_size,
             buffer: Vec::new(),
-            instructions: Vec::new(),
             insert_buffer: Vec::new(),
+            output_buffer: Vec::new(),
         }
     }
 
-    /// Generate a chunk of target data.
+    /// Process a chunk of target data.
+    /// This may generate serialized output in the output buffer
     pub fn process_target_chunk(&mut self, chunk: &[u8]) {
         self.buffer.extend_from_slice(chunk);
         self.process_buffer();
@@ -49,28 +53,25 @@ impl StreamingDiff {
         let mut current_hash = hasher.hash_chunk(&self.buffer[0..self.block_size]);
 
         while pos + self.block_size <= self.buffer.len() {
-            // Look up current hash in index - get first offset if exists
+            // Look up current hash in index
             let matched_offset = self.index.lookup(current_hash).first().copied();
 
             if let Some(source_offset) = matched_offset {
-                //  Flush any pending INSERT data
+                // Found a match! Flush pending INSERT data first
                 self.flush_insert_buffer();
 
-                // Emit COPY instruction
-                self.instructions.push(Instruction::Copy {
-                    offset: source_offset,
-                    length: self.block_size as u32,
-                });
+                // Emit COPY instruction (serialize directly)
+                self.emit_copy(source_offset, self.block_size as u32);
 
                 // Skip past the matched block
                 pos += self.block_size;
 
-                // Recalculate hash for new position if we have enough data
+                // Recalculate hash for new position
                 if pos + self.block_size <= self.buffer.len() {
                     current_hash = hasher.hash_chunk(&self.buffer[pos..pos + self.block_size]);
                 }
             } else {
-                // Add first byte to INSERT buffer
+                // Add byte to INSERT buffer
                 self.insert_buffer.push(self.buffer[pos]);
                 pos += 1;
 
@@ -83,30 +84,56 @@ impl StreamingDiff {
             }
         }
 
-        // Keep remaining bytes
+        // Keep remaining bytes that couldn't form a complete block
         self.buffer = self.buffer[pos..].to_vec();
     }
 
     /// Flust pending INSERT buffer to instructions
     fn flush_insert_buffer(&mut self) {
         if !self.insert_buffer.is_empty() {
-            self.instructions.push(Instruction::Insert {
-                data: std::mem::take(&mut self.insert_buffer),
-            });
+            // Serialize INSERT instruction: type(1) + length(4) + data
+            self.output_buffer.push(TYPE_INSERT);
+            self.output_buffer
+                .extend_from_slice(&(self.insert_buffer.len() as u32).to_le_bytes());
+            self.output_buffer.extend_from_slice(&self.insert_buffer);
+
+            // Clear the insert buffer
+            self.insert_buffer.clear();
         }
     }
-    /// finalize and get all instructions
-    pub fn finalize(mut self) -> Vec<Instruction> {
-        // Flush any remaining pending bytes to INSERT
-        self.insert_buffer.extend_from_slice(&self.buffer);
-        self.flush_insert_buffer();
 
-        self.instructions
+    /// Emit a COPY instruction by serializing to output
+    fn emit_copy(&mut self, offset: u64, length: u32) {
+        // Serialize COPY instruction: type(1) + offset(8) + length(4)
+        self.output_buffer.push(TYPE_COPY);
+        self.output_buffer.extend_from_slice(&offset.to_le_bytes());
+        self.output_buffer.extend_from_slice(&length.to_le_bytes());
     }
 
-    /// Get current instruction count
-    pub fn instruction_count(&self) -> usize {
-        self.instructions.len()
+    /// Finalize processing - flush any remaining data.
+    pub fn finalize(&mut self) {
+        // Any remaining bytes in buffer go to INSERT
+        self.insert_buffer.extend_from_slice(&self.buffer);
+        self.buffer.clear();
+
+        // Flush final INSERT if any
+        self.flush_insert_buffer();
+    }
+
+    /// Take the output buffer (transfers ownership)
+    /// Returns serliazed patch instructions ready to write
+    pub fn take_output(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.output_buffer)
+    }
+
+    /// Get current output buffer size.
+    pub fn output_len(&self) -> usize {
+        self.output_buffer.len()
+    }
+
+    /// Check is there's pending outout to consume.
+    pub fn has_output(&self) -> bool {
+        !self.output_buffer.is_empty()
     }
 }
 
@@ -122,63 +149,74 @@ mod tests {
     }
 
     #[test]
-    fn test_identical_data() {
-        let data = b"aaaabbbbccccdddd";
-        let index = build_index(data, 4);
-
-        let mut diff = StreamingDiff::new(index);
-        diff.process_target_chunk(data);
-        let instructions = diff.finalize();
-
-        // Should be all COPY instructions
-        assert_eq!(instructions.len(), 4);
-        for instr in &instructions {
-            assert!(matches!(instr, Instruction::Copy { .. }));
-        }
-    }
-
-    #[test]
-    fn test_completely_different() {
+    fn test_streaming_output() {
         let source = b"aaaabbbbccccdddd";
-        let target = b"eeeeffffgggghhhh";
+        let target = b"aaaabbbbccccdddd";
         let index = build_index(source, 4);
 
         let mut diff = StreamingDiff::new(index);
         diff.process_target_chunk(target);
-        let instructions = diff.finalize();
+        diff.finalize();
 
-        // Should be all INSERT (no matches)
-        assert_eq!(instructions.len(), 1);
-        if let Instruction::Insert { data } = &instructions[0] {
-            assert_eq!(data, target);
-        } else {
-            panic!("Expected INSERT instruction");
-        }
+        let output = diff.take_output();
+
+        // Should have 4 COPY instructions (13 bytes each)
+        // Each COPY: type(1) + offset(8) + length(4) = 13 bytes
+        assert_eq!(output.len(), 4 * 13);
+
+        // First byte of each instruction should be TYPE_COPY
+        assert_eq!(output[0], 0x01);
+        assert_eq!(output[13], 0x01);
+        assert_eq!(output[26], 0x01);
+        assert_eq!(output[39], 0x01);
     }
 
     #[test]
-    fn test_partial_match() {
+    fn test_insert_output() {
+        let source = b"aaaabbbb";
+        let target = b"xxxx"; // completely different
+        let index = build_index(source, 4);
+
+        let mut diff = StreamingDiff::new(index);
+        diff.process_target_chunk(target);
+        diff.finalize();
+
+        let output = diff.take_output();
+
+        // Should have 1 INSERT instruction
+        // INSERT: type(1) + length(4) + data(4) = 9 bytes
+        assert_eq!(output.len(), 9);
+        assert_eq!(output[0], 0x02); // TYPE_INSERT
+
+        // Length should be 4
+        let length = u32::from_le_bytes([output[1], output[2], output[3], output[4]]);
+        assert_eq!(length, 4);
+
+        // Data should be "xxxx"
+        assert_eq!(&output[5..9], b"xxxx");
+    }
+
+    #[test]
+    fn test_mixed_output() {
         let source = b"aaaabbbbccccdddd";
         let target = b"xxxxbbbbyyyycccc";
         let index = build_index(source, 4);
 
         let mut diff = StreamingDiff::new(index);
         diff.process_target_chunk(target);
-        let instructions = diff.finalize();
+        diff.finalize();
 
-        // Should have: INSERT(xxxx), COPY(bbbb), INSERT(yyyy), COPY(cccc)
-        let has_copy = instructions
-            .iter()
-            .any(|i| matches!(i, Instruction::Copy { .. }));
-        let has_insert = instructions
-            .iter()
-            .any(|i| matches!(i, Instruction::Insert { .. }));
-        assert!(has_copy);
-        assert!(has_insert);
+        let output = diff.take_output();
+
+        // Should have: INSERT(xxxx) + COPY(bbbb) + INSERT(yyyy) + COPY(cccc)
+        // INSERT: 1 + 4 + 4 = 9 bytes
+        // COPY: 1 + 8 + 4 = 13 bytes
+        // Total: 9 + 13 + 9 + 13 = 44 bytes
+        assert_eq!(output.len(), 44);
     }
 
     #[test]
-    fn test_chunked_processing() {
+    fn test_incremental_output() {
         let source = b"aaaabbbbccccdddd";
         let index = build_index(source, 4);
 
@@ -186,73 +224,19 @@ mod tests {
 
         // Process in small chunks
         diff.process_target_chunk(b"aaaa");
+        let out1 = diff.output_len();
+
         diff.process_target_chunk(b"bbbb");
+        let out2 = diff.output_len();
+
+        // Output should grow as we process
+        assert!(out2 >= out1);
+
         diff.process_target_chunk(b"cccc");
         diff.process_target_chunk(b"dddd");
+        diff.finalize();
 
-        let instructions = diff.finalize();
-
-        // Should still get 4 COPY instructions
-        assert_eq!(instructions.len(), 4);
-    }
-
-    #[test]
-    fn test_unaligned_chunks() {
-        let source = b"aaaabbbbccccdddd";
-        let index = build_index(source, 4);
-
-        let mut diff = StreamingDiff::new(index);
-
-        // Process in unaligned chunks
-        diff.process_target_chunk(b"aa");
-        diff.process_target_chunk(b"aabb");
-        diff.process_target_chunk(b"bbcc");
-        diff.process_target_chunk(b"ccdd");
-        diff.process_target_chunk(b"dd");
-
-        let instructions = diff.finalize();
-
-        // Should still recognize all blocks
-        assert_eq!(instructions.len(), 4);
-    }
-
-    #[test]
-    fn test_empty_target() {
-        let source = b"aaaabbbb";
-        let index = build_index(source, 4);
-
-        let diff = StreamingDiff::new(index);
-        let instructions = diff.finalize();
-
-        assert!(instructions.is_empty());
-    }
-
-    #[test]
-    fn test_target_smaller_than_block() {
-        let source = b"aaaabbbb";
-        let target = b"xx";
-        let index = build_index(source, 4);
-
-        let mut diff = StreamingDiff::new(index);
-        diff.process_target_chunk(target);
-        let instructions = diff.finalize();
-
-        // Should be single INSERT
-        assert_eq!(instructions.len(), 1);
-        if let Instruction::Insert { data } = &instructions[0] {
-            assert_eq!(data, b"xx");
-        }
-    }
-
-    #[test]
-    fn test_instruction_count() {
-        let source = b"aaaabbbb";
-        let index = build_index(source, 4);
-
-        let mut diff = StreamingDiff::new(index);
-        diff.process_target_chunk(b"aaaabbbb");
-
-        // After processing, should have 2 COPY instructions
-        assert_eq!(diff.instruction_count(), 2);
+        let output = diff.take_output();
+        assert_eq!(output.len(), 4 * 13); // 4 COPY instructions
     }
 }

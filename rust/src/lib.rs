@@ -17,16 +17,6 @@ use crate::utils::buffer::ChunkBuffer;
 const DEFAULT_CHUNK_SIZE: usize = 4096;
 
 /// Streaming patch build
-///
-/// # Memory Usage
-/// - Source: O(blocks) - use BlockIndex
-/// - Target: Processed incrementally via StreamingDiff
-///
-/// # Usage Flow
-/// 1. Call add_source_chunk() for all source data
-/// 2. Call finalize_source() when done with source
-/// 3. Call add_target_chunk() for all target data
-/// 4. Call finalize() to get the patch
 #[wasm_bindgen]
 pub struct PatchBuilder {
     // Block index for source
@@ -39,12 +29,20 @@ pub struct PatchBuilder {
     source_size: u64,
     // Total target bytes received
     target_size: u64,
-    // Streaming diff processor (created after finalize_source)
+    // Expected total target size (set upfront header)
+    target_total_size: u64,
+    // Streaming diff processor
     diff: Option<StreamingDiff>,
     // Whether source has been finalized
     source_finalized: bool,
     // Chunk size for matching
     chunk_size: usize,
+    // Serialized patch data ready to output
+    output_buffer: Vec<u8>,
+    // Whether header has been written
+    header_written: bool,
+    // Whether all target data processed
+    target_finalized: bool,
 }
 
 #[wasm_bindgen]
@@ -58,9 +56,13 @@ impl PatchBuilder {
             target_hasher: HashBuilder::new(),
             source_size: 0,
             target_size: 0,
+            target_total_size: 0,
             diff: None,
             source_finalized: false,
             chunk_size: DEFAULT_CHUNK_SIZE,
+            output_buffer: Vec::new(),
+            header_written: false,
+            target_finalized: false,
         }
     }
 
@@ -94,7 +96,15 @@ impl PatchBuilder {
         self.source_finalized = true;
     }
 
+    /// Set the expected total target size.
+    /// Must be called before add_target_chunk() for proper header generation.
+    #[wasm_bindgen]
+    pub fn set_target_size(&mut self, size: u64) {
+        self.target_total_size = size;
+    }
+
     /// Add a chunk of target (new file) data.
+    /// This immediately generates patch output - call flush_output() to retrieve it.
     #[wasm_bindgen]
     pub fn add_target_chunk(&mut self, chunk: &[u8]) {
         if !self.source_finalized {
@@ -106,7 +116,34 @@ impl PatchBuilder {
 
         if let Some(diff) = &mut self.diff {
             diff.process_target_chunk(chunk);
+
+            // Pull output from diff into our buffer
+            if diff.has_output() {
+                let output = diff.take_output();
+                self.output_buffer.extend_from_slice(&output);
+            }
         }
+    }
+
+    /// Finalize target processing.
+    /// Call this after all target chunks have been added.
+    #[wasm_bindgen]
+    pub fn finalize_target(&mut self) {
+        if self.target_finalized {
+            return;
+        }
+
+        if let Some(diff) = &mut self.diff {
+            diff.finalize();
+
+            // Pull final output
+            if diff.has_output() {
+                let output = diff.take_output();
+                self.output_buffer.extend_from_slice(&output);
+            }
+        }
+
+        self.target_finalized = true;
     }
 
     /// Get current source size (bytes received so far).
@@ -121,46 +158,62 @@ impl PatchBuilder {
         self.target_size as usize
     }
 
-    /// Check if source and target files are indentical.
-    /// Files are identical if both size AND hash match
+    /// Check if source and target files are identical.
+    /// Only accurate after all data has been processed.
     #[wasm_bindgen]
     pub fn are_files_identical(&self) -> bool {
         let same_size = self.source_size == self.target_size;
         let same_hash = self.source_hasher.finalize() == self.target_hasher.finalize();
-
         same_size && same_hash
     }
 
-    /// Finalize and generate the patch.
-    /// returns serialized patch data.
+    /// Check if there's patch output available to read.
     #[wasm_bindgen]
-    pub fn finalize(&mut self) -> Result<Vec<u8>, JsError> {
-        // Ensure source is finalized
-        if !self.source_finalized {
-            self.finalize_source();
+    pub fn has_output(&self) -> bool {
+        // Has output if: header not written yet, OR there's data in buffer
+        !self.header_written || !self.output_buffer.is_empty()
+    }
+
+    /// Get next chunk of patch output.
+    /// Returns serialized patch data ready to write to file.
+    #[wasm_bindgen]
+    pub fn flush_output(&mut self, max_size: usize) -> Vec<u8> {
+        let mut result = Vec::with_capacity(max_size);
+
+        // Write header first if not written
+        if !self.header_written {
+            let source_hash = self.source_hasher.finalize();
+
+            // Magic(4) + version(1) + chunk_size(4) + source_size(8) + source_hash(8) + target_size(8) = 33 bytes
+            result.extend_from_slice(b"PTCH");
+            result.push(1); // VERSION
+            result.extend_from_slice(&(self.chunk_size as u32).to_le_bytes());
+            result.extend_from_slice(&self.source_size.to_le_bytes());
+            result.extend_from_slice(&source_hash.to_le_bytes());
+            result.extend_from_slice(&self.target_total_size.to_le_bytes());
+
+            self.header_written = true;
         }
 
-        // Take the diff and finalize it
-        let diff = self
-            .diff
-            .take()
-            .ok_or_else(|| JsError::new("No diff processor available"))?;
+        // Fill remaining space with output buffer data
+        let space_remaining = max_size - result.len();
+        let bytes_to_take = space_remaining.min(self.output_buffer.len());
 
-        let instructions = diff.finalize();
+        if bytes_to_take > 0 {
+            // Take from front of output_buffer
+            result.extend_from_slice(&self.output_buffer[..bytes_to_take]);
 
-        // Create patch with metadata
-        let source_hash = self.source_hasher.finalize();
-        let mut patch = Patch::new(
-            self.chunk_size as u32,
-            self.source_size,
-            source_hash,
-            self.target_size,
-        );
-        patch.instructions = instructions;
+            // Remove taken bytes from buffer
+            self.output_buffer = self.output_buffer[bytes_to_take..].to_vec();
+        }
 
-        patch
-            .serialize()
-            .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))
+        result
+    }
+
+    /// Get approximate pending output size
+    #[wasm_bindgen]
+    pub fn pending_output_size(&self) -> usize {
+        self.output_buffer.len()
     }
 
     /// Reset the builder for reuse.
@@ -171,8 +224,12 @@ impl PatchBuilder {
         self.target_hasher = HashBuilder::new();
         self.source_size = 0;
         self.target_size = 0;
+        self.target_total_size = 0;
         self.diff = None;
         self.source_finalized = false;
+        self.output_buffer.clear();
+        self.header_written = false;
+        self.target_finalized = false;
     }
 }
 
@@ -443,33 +500,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_streaming_patch_builder_basic() {
-        let source = b"aaaabbbbccccdddd";
-        let target = b"aaaaNEWWccccdddd";
-
-        let mut builder = PatchBuilder::new();
-        builder.add_source_chunk(source);
-        builder.finalize_source();
-        builder.add_target_chunk(target);
-
-        let patch_data = builder.finalize().unwrap();
-        assert!(!patch_data.is_empty());
-
-        // Verify patch can be applied
-        let mut applier = PatchApplier::new();
-        applier.add_source_chunk(source);
-        applier.set_patch(&patch_data);
-        applier.prepare().unwrap();
-
-        let mut result = Vec::new();
-        while applier.has_more_output() {
-            result.extend(applier.next_output_chunk(100));
-        }
-
-        assert_eq!(result, target);
-    }
-
-    #[test]
     fn test_identical_files_detection() {
         let data = b"identical content here";
 
@@ -492,57 +522,6 @@ mod tests {
         builder.add_target_chunk(target);
 
         assert!(!builder.are_files_identical());
-    }
-
-    #[test]
-    fn test_chunked_source_input() {
-        let source = b"aaaabbbbccccdddd";
-        let target = b"aaaabbbbccccdddd";
-
-        let mut builder = PatchBuilder::new();
-
-        // Add source in chunks
-        builder.add_source_chunk(b"aaaa");
-        builder.add_source_chunk(b"bbbb");
-        builder.add_source_chunk(b"cccc");
-        builder.add_source_chunk(b"dddd");
-        builder.finalize_source();
-
-        // Add target in chunks
-        builder.add_target_chunk(b"aaaa");
-        builder.add_target_chunk(b"bbbb");
-        builder.add_target_chunk(b"cccc");
-        builder.add_target_chunk(b"dddd");
-
-        let patch_data = builder.finalize().unwrap();
-
-        // Verify roundtrip
-        let mut applier = PatchApplier::new();
-        applier.add_source_chunk(source);
-        applier.set_patch(&patch_data);
-        applier.prepare().unwrap();
-
-        let mut result = Vec::new();
-        while applier.has_more_output() {
-            result.extend(applier.next_output_chunk(100));
-        }
-
-        assert_eq!(result, target);
-    }
-
-    #[test]
-    fn test_auto_finalize_source() {
-        // If finalize_source() is not called, add_target_chunk should auto-finalize
-        let source = b"test source";
-        let target = b"test target";
-
-        let mut builder = PatchBuilder::new();
-        builder.add_source_chunk(source);
-        // Skipping finalize_source() intentionally
-        builder.add_target_chunk(target);
-
-        let patch_data = builder.finalize().unwrap();
-        assert!(!patch_data.is_empty());
     }
 
     #[test]

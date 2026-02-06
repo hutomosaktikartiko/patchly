@@ -65,36 +65,69 @@ async function createPatch(sourceFile: File, targetFile: File, outputName: strin
     builder.finalize_source();
     send({ type: 'progress', stage: 'Source indexed', percent: 40 });
 
-    // Read target and generate diff on-the-fly
-    await readFileChunked(targetFile, (chunk) => {
-      builder.add_target_chunk(chunk);
+    // Set target size for header
+    builder.set_target_size(BigInt(targetFile.size));
+
+    // Open output file for streaming
+    const writable = await createOpfsFile(outputName);
+    let totalWritten = 0;
+
+    // Process target file
+    const reader = targetFile.stream().getReader();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // Process this chunk
+      builder.add_target_chunk(value);
+
+      // Flush any available output
+      while (builder.has_output() && builder.pending_output_size() >= WRITE_CHUNK_SIZE) {
+        const patchChunk = builder.flush_output(WRITE_CHUNK_SIZE);
+        if (patchChunk.length === 0) break;
+        
+        const copy = new Uint8Array(patchChunk);
+        await writable.write(new Blob([copy]));
+        totalWritten += patchChunk.length;
+      }
+
+      // Report progress
+      const percent = 40 + (builder.target_size() / targetFile.size) * 50;
       send({
         type: 'progress',
         stage: 'Processing target',
-        percent: 40 + (builder.target_size() / targetFile.size) * 40,
+        percent,
         detail: formatBytes(builder.target_size())
       });
-    });
+    }
 
     // Check if files are identical
     if (builder.are_files_identical()) {
+      await writable.close();
       builder.reset();
       send({ type: 'identical' });
       return;
     }
 
-    // Finalize and serialize patch
-    send({ type: 'progress', stage: 'Generating patch', percent: 80 });
-    const patchData = builder.finalize();
+    // Finalize target processing
+    send({ type: 'progress', stage: 'Finalizing', percent: 90 });
+    builder.finalize_target();
 
-    // Write patch to OPFS
-    send({ type: 'progress', stage: 'Writing patch', percent: 90 });
-    const writable = await createOpfsFile(outputName);
-    await writable.write(patchData as Uint8Array<ArrayBuffer>);
+    // Flush all remaining output
+    while (builder.has_output()) {
+      const patchChunk = builder.flush_output(WRITE_CHUNK_SIZE);
+      if (patchChunk.length === 0) break;
+      
+      const copy = new Uint8Array(patchChunk);
+      await writable.write(new Blob([copy]));
+      totalWritten += patchChunk.length;
+    }
+
     await writable.close();
 
     send({ type: 'progress', stage: 'Complete', percent: 100 });
-    send({ type: 'complete', outputName, size: patchData.length });
+    send({ type: 'complete', outputName, size: totalWritten });
 
     builder.reset();
   } catch (err) {

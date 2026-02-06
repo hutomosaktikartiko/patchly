@@ -68,7 +68,8 @@ export class PatchApplier {
  * 1. Call add_source_chunk() for all source data
  * 2. Call finalize_source() when done with source
  * 3. Call add_target_chunk() for all target data
- * 4. Call finalize() to get the patch
+ * 4. Call prepare_patch() to prepare for streaming output
+ * 5. Call next_patch_chunk() repeatedly until has_more_patch() returns false
  */
 export class PatchBuilder {
     free(): void;
@@ -79,30 +80,49 @@ export class PatchBuilder {
     add_source_chunk(chunk: Uint8Array): void;
     /**
      * Add a chunk of target (new file) data.
+     * This immediately generates patch output - call flush_output() to retrieve it.
      */
     add_target_chunk(chunk: Uint8Array): void;
     /**
-     * Check if source and target files are indentical.
-     * Files are identical if both size AND hash match
+     * Check if source and target files are identical.
+     * Only accurate after all data has been processed.
      */
     are_files_identical(): boolean;
-    /**
-     * Finalize and generate the patch.
-     * returns serialized patch data.
-     */
-    finalize(): Uint8Array;
     /**
      * Finalize source processing.
      */
     finalize_source(): void;
     /**
+     * Finalize target processing.
+     * Call this after all target chunks have been added.
+     */
+    finalize_target(): void;
+    /**
+     * Get next chunk of patch output.
+     * Returns serialized patch data ready to write to file.
+     */
+    flush_output(max_size: number): Uint8Array;
+    /**
+     * Check if there's patch output available to read.
+     */
+    has_output(): boolean;
+    /**
      * Create a new PatchBuilder with default chunk size
      */
     constructor();
     /**
+     * Get approximate pending output size (for progress calculation).
+     */
+    pending_output_size(): number;
+    /**
      * Reset the builder for reuse.
      */
     reset(): void;
+    /**
+     * Set the expected total target size.
+     * Must be called before add_target_chunk() for proper header generation.
+     */
+    set_target_size(size: bigint): void;
     /**
      * Get current source size (bytes received so far).
      */
@@ -131,11 +151,15 @@ export interface InitOutput {
     readonly patchbuilder_new: () => number;
     readonly patchbuilder_add_source_chunk: (a: number, b: number, c: number) => void;
     readonly patchbuilder_finalize_source: (a: number) => void;
+    readonly patchbuilder_set_target_size: (a: number, b: bigint) => void;
     readonly patchbuilder_add_target_chunk: (a: number, b: number, c: number) => void;
+    readonly patchbuilder_finalize_target: (a: number) => void;
     readonly patchbuilder_source_size: (a: number) => number;
     readonly patchbuilder_target_size: (a: number) => number;
     readonly patchbuilder_are_files_identical: (a: number) => number;
-    readonly patchbuilder_finalize: (a: number) => [number, number, number, number];
+    readonly patchbuilder_has_output: (a: number) => number;
+    readonly patchbuilder_flush_output: (a: number, b: number) => [number, number];
+    readonly patchbuilder_pending_output_size: (a: number) => number;
     readonly patchbuilder_reset: (a: number) => void;
     readonly __wbg_patchapplier_free: (a: number, b: number) => void;
     readonly patchapplier_new: () => number;

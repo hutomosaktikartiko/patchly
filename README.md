@@ -129,13 +129,14 @@ User selects target file (new version)
   ↓
 Files are read in streaming chunks
   ↓
-Check is files are identical (skip if same)
+Source file is indexed (BlockIndex)
   ↓
-Rush compares binary chunks using rolling hash
+Target file is processed with interleaved output:
+  - Read target chunk
+  - Generate patch instructions (COPY/INSERT)
+  - Flush to OPFS immediately
   ↓
-Patch instructions (COPY/INSERT) are generated
-  ↓
-Patch is written to OPFS storage
+Check if files are identical (skip if same)
   ↓
 User dodnloads patch file (.patch)
 ```
@@ -198,7 +199,7 @@ User downloads reconstructured file
 - [x] ChunkBuffer for memory-efficient processing
 - [x] True streaming architecture for GB-scale files
 - [x] Stream source to block index only (BlockIndex)
-- [x] Stream target directly to patch instructions (StreamingDiff)
+- [x] Stream target directly to patch output (no instruction accumulation)
 - [x] Stream patch output directly to OPFS
 - [x] Streaming PatchApplier (no full output in memory)
 
