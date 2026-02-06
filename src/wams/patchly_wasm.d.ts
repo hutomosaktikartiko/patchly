@@ -20,17 +20,9 @@ export class PatchApplier {
      */
     expected_target_size(): bigint;
     /**
-     * Get patch info as JSON string.
-     */
-    get_patch_info(): string;
-    /**
      * Check if there's more output to read.
      */
     has_more_output(): boolean;
-    /**
-     * Check if patch has been loaded.
-     */
-    is_patch_loaded(): boolean;
     /**
      * Create a new PatchApplier
      */
@@ -108,10 +100,6 @@ export class PatchBuilder {
      */
     constructor();
     /**
-     * Get progress as percentage (0-100) based on expected sizes.
-     */
-    progress(source_expected: number, target_expected: number): number;
-    /**
      * Reset the builder for reuse.
      */
     reset(): void;
@@ -123,10 +111,6 @@ export class PatchBuilder {
      * Get current target size (bytes received so far).
      */
     target_size(): number;
-    /**
-     * Create a new PatchBuilder with custom chunk size.
-     */
-    static with_chunk_size(chunk_size: number): PatchBuilder;
 }
 
 /**
@@ -145,7 +129,6 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_patchbuilder_free: (a: number, b: number) => void;
     readonly patchbuilder_new: () => number;
-    readonly patchbuilder_with_chunk_size: (a: number) => number;
     readonly patchbuilder_add_source_chunk: (a: number, b: number, c: number) => void;
     readonly patchbuilder_finalize_source: (a: number) => void;
     readonly patchbuilder_add_target_chunk: (a: number, b: number, c: number) => void;
@@ -153,14 +136,12 @@ export interface InitOutput {
     readonly patchbuilder_target_size: (a: number) => number;
     readonly patchbuilder_are_files_identical: (a: number) => number;
     readonly patchbuilder_finalize: (a: number) => [number, number, number, number];
-    readonly patchbuilder_progress: (a: number, b: number, c: number) => number;
     readonly patchbuilder_reset: (a: number) => void;
     readonly __wbg_patchapplier_free: (a: number, b: number) => void;
     readonly patchapplier_new: () => number;
     readonly patchapplier_add_source_chunk: (a: number, b: number, c: number) => void;
     readonly patchapplier_set_patch: (a: number, b: number, c: number) => void;
     readonly patchapplier_source_size: (a: number) => number;
-    readonly patchapplier_is_patch_loaded: (a: number) => number;
     readonly patchapplier_validate_source: (a: number) => [number, number, number];
     readonly patchapplier_expected_source_size: (a: number) => [bigint, number, number];
     readonly patchapplier_expected_target_size: (a: number) => [bigint, number, number];
@@ -169,7 +150,6 @@ export interface InitOutput {
     readonly patchapplier_next_output_chunk: (a: number, b: number) => [number, number];
     readonly patchapplier_remaining_output_size: (a: number) => bigint;
     readonly patchapplier_reset: (a: number) => void;
-    readonly patchapplier_get_patch_info: (a: number) => [number, number, number, number];
     readonly version: () => [number, number];
     readonly hash_data: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;

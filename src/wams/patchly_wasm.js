@@ -46,41 +46,11 @@ export class PatchApplier {
         return BigInt.asUintN(64, ret[0]);
     }
     /**
-     * Get patch info as JSON string.
-     * @returns {string}
-     */
-    get_patch_info() {
-        let deferred2_0;
-        let deferred2_1;
-        try {
-            const ret = wasm.patchapplier_get_patch_info(this.__wbg_ptr);
-            var ptr1 = ret[0];
-            var len1 = ret[1];
-            if (ret[3]) {
-                ptr1 = 0; len1 = 0;
-                throw takeFromExternrefTable0(ret[2]);
-            }
-            deferred2_0 = ptr1;
-            deferred2_1 = len1;
-            return getStringFromWasm0(ptr1, len1);
-        } finally {
-            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-        }
-    }
-    /**
      * Check if there's more output to read.
      * @returns {boolean}
      */
     has_more_output() {
         const ret = wasm.patchapplier_has_more_output(this.__wbg_ptr);
-        return ret !== 0;
-    }
-    /**
-     * Check if patch has been loaded.
-     * @returns {boolean}
-     */
-    is_patch_loaded() {
-        const ret = wasm.patchapplier_is_patch_loaded(this.__wbg_ptr);
         return ret !== 0;
     }
     /**
@@ -171,13 +141,6 @@ if (Symbol.dispose) PatchApplier.prototype[Symbol.dispose] = PatchApplier.protot
  * 4. Call finalize() to get the patch
  */
 export class PatchBuilder {
-    static __wrap(ptr) {
-        ptr = ptr >>> 0;
-        const obj = Object.create(PatchBuilder.prototype);
-        obj.__wbg_ptr = ptr;
-        PatchBuilderFinalization.register(obj, obj.__wbg_ptr, obj);
-        return obj;
-    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -245,16 +208,6 @@ export class PatchBuilder {
         return this;
     }
     /**
-     * Get progress as percentage (0-100) based on expected sizes.
-     * @param {number} source_expected
-     * @param {number} target_expected
-     * @returns {number}
-     */
-    progress(source_expected, target_expected) {
-        const ret = wasm.patchbuilder_progress(this.__wbg_ptr, source_expected, target_expected);
-        return ret;
-    }
-    /**
      * Reset the builder for reuse.
      */
     reset() {
@@ -275,15 +228,6 @@ export class PatchBuilder {
     target_size() {
         const ret = wasm.patchbuilder_target_size(this.__wbg_ptr);
         return ret >>> 0;
-    }
-    /**
-     * Create a new PatchBuilder with custom chunk size.
-     * @param {number} chunk_size
-     * @returns {PatchBuilder}
-     */
-    static with_chunk_size(chunk_size) {
-        const ret = wasm.patchbuilder_with_chunk_size(chunk_size);
-        return PatchBuilder.__wrap(ret);
     }
 }
 if (Symbol.dispose) PatchBuilder.prototype[Symbol.dispose] = PatchBuilder.prototype.free;

@@ -25,37 +25,30 @@ patchly/
 ├─ src/
 │   ├─ main.tsx
 │   ├─ App.tsx
+│   ├─ App.css
 │   ├─ index.css
 │   │
-│   ├─ components/
-│   │   ├─ FilePicker.tsx
-│   │   ├─ ModeSelector.tsx      # Generate Patch / Apply Patch
-│   │   ├─ ProgressBar.tsx
-│   │   ├─ ActionButtons.tsx
-│   │   └─ ErrorBanner.tsx
+│   ├─ assets/
+│   │   └─ react.svg
 │   │
-│   ├─ pages/
-│   │   └─ Home.tsx
+│   ├─ workers/
+│   │   ├─ index.ts
+│   │   ├─ types.ts
+│   │   └─ patchly.worker.ts    # Web Worker for WASM operations
 │   │
-│   ├─ hooks/
-│   │   ├─ usePatchWorker.ts
-│   │   └─ useFileDiff.ts
-│   │
-│   ├─ worker/
-│   │   ├─ diff.worker.ts
-│   │   ├─ messages.ts
-│   │   └─ types.ts
-│   │
-│   ├─ wasm/
-│   │   └─ patch_wasm.ts
+│   ├─ wams/                     # WASM generated output
+│   │   ├─ package.json
+│   │   ├─ patchly_wasm.js
+│   │   ├─ patchly_wasm.d.ts
+│   │   ├─ patchly_wasm_bg.wasm
+│   │   └─ patchly_wasm_bg.wasm.d.ts
 │   │
 │   ├─ utils/
-│   │   ├─ download.ts
-│   │   ├─ file.ts
-│   │   └─ constants.ts
+│   │   ├─ bytes.ts              # Byte formatting utilities
+│   │   └─ opfs.ts               # OPFS storage utilities
 │   │
 │   └─ types/
-│       └─ index.ts
+│       └─ opfs.d.ts
 │
 ├─ rust/
 │   ├─ Cargo.toml
@@ -64,16 +57,17 @@ patchly/
 │       ├─ lib.rs
 │       ├─ diff/
 │       │   ├─ mod.rs
-│       │   ├─ rolling_hash.rs
-│       │   ├─ matcher.rs
-│       │   └─ patch.rs
+│       │   ├─ rolling_hash.rs   # O(1) rolling hash for chunk matching
+│       │   ├─ block_index.rs    # Memory-efficient hash→offset index
+│       │   └─ streaming_diff.rs # Streaming diff generator
 │       │
 │       ├─ format/
 │       │   ├─ mod.rs
-│       │   └─ patch_format.rs
+│       │   └─ patch_format.rs   # Patch serialization/deserialization
 │       │
 │       └─ utils/
-│           └─ buffer.rs
+│           ├─ mod.rs
+│           └─ buffer.rs         # ChunkBuffer for streaming
 │
 └─ scripts/
     └─ build-wasm.sh
@@ -202,11 +196,11 @@ User downloads reconstructured file
 - [x] Streaming output to disk (OPFS)
 - [x] Transferable buffers (zero-copy)
 - [x] ChunkBuffer for memory-efficient processing
-- [ ] True streaming architecture for GB-scale files
-- [ ] Stream source to block index only
-- [ ] Stream target directly to patch instructions
-- [ ] Stream patch output directly to OPFS
-- [ ] Remove WASM memory limit dependency
+- [x] True streaming architecture for GB-scale files
+- [x] Stream source to block index only (BlockIndex)
+- [x] Stream target directly to patch instructions (StreamingDiff)
+- [x] Stream patch output directly to OPFS
+- [x] Streaming PatchApplier (no full output in memory)
 
 ### Safety & Validation
 

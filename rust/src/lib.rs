@@ -14,10 +14,7 @@ use crate::format::patch_format::{calculate_hash, HashBuilder, Instruction, Patc
 use crate::utils::buffer::ChunkBuffer;
 
 /// Default chunk size for diff matching (4KB)
-const DEFAULT_CHUNK_SIZE: usize = 4 * 1024;
-
-/// Default output chunk size for streaming (1MB)
-const DEFAULT_OUTPUT_CHUNK_SIZE: usize = 1024 * 1024;
+const DEFAULT_CHUNK_SIZE: usize = 4096;
 
 /// Streaming patch build
 ///
@@ -55,21 +52,15 @@ impl PatchBuilder {
     /// Create a new PatchBuilder with default chunk size
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self::with_chunk_size(DEFAULT_CHUNK_SIZE)
-    }
-
-    /// Create a new PatchBuilder with custom chunk size.
-    #[wasm_bindgen]
-    pub fn with_chunk_size(chunk_size: usize) -> Self {
         Self {
-            source_index: BlockIndex::with_block_size(chunk_size),
+            source_index: BlockIndex::with_block_size(DEFAULT_CHUNK_SIZE),
             source_hasher: HashBuilder::new(),
             target_hasher: HashBuilder::new(),
             source_size: 0,
             target_size: 0,
             diff: None,
             source_finalized: false,
-            chunk_size,
+            chunk_size: DEFAULT_CHUNK_SIZE,
         }
     }
 
@@ -172,17 +163,6 @@ impl PatchBuilder {
             .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))
     }
 
-    /// Get progress as percentage (0-100) based on expected sizes.
-    #[wasm_bindgen]
-    pub fn progress(&self, source_expected: usize, target_expected: usize) -> f64 {
-        let total_expected = source_expected + target_expected;
-        if total_expected == 0 {
-            return 100.0;
-        }
-        let total_received = self.source_size + self.target_size;
-        (total_received as f64 / total_expected as f64 * 100.0).min(100.0)
-    }
-
     /// Reset the builder for reuse.
     #[wasm_bindgen]
     pub fn reset(&mut self) {
@@ -269,12 +249,6 @@ impl PatchApplier {
         self.source_buffer.total_size()
     }
 
-    /// Check if patch has been loaded.
-    #[wasm_bindgen]
-    pub fn is_patch_loaded(&self) -> bool {
-        self.patch_loaded
-    }
-
     /// Validate source file before applying.
     #[wasm_bindgen]
     pub fn validate_source(&self) -> Result<bool, JsError> {
@@ -355,17 +329,6 @@ impl PatchApplier {
         self.current_instruction < self.instructions.len()
     }
 
-    // /// Get output progress as percentage (0-100).
-    // #[wasm_bindgen]
-    // pub fn output_progress(&self) -> f64 {
-    //     match &self.output_buffer {
-    //         Some(buf) if !buf.is_empty() => {
-    //             (self.output_position as f64 / buf.len() as f64 * 100.0).min(100.0)
-    //         }
-    //         _ => 0.0,
-    //     }
-    // }
-
     /// Get next chunk of output data.
     #[wasm_bindgen]
     pub fn next_output_chunk(&mut self, max_size: usize) -> Vec<u8> {
@@ -430,15 +393,6 @@ impl PatchApplier {
         result
     }
 
-    // /// Get total output size
-    // #[wasm_bindgen]
-    // pub fn total_output_size(&self) -> usize {
-    //     match &self.output_buffer {
-    //         Some(buf) => buf.len(),
-    //         None => 0,
-    //     }
-    // }
-
     /// Get remaining bytes to output
     #[wasm_bindgen]
     pub fn remaining_output_size(&self) -> u64 {
@@ -463,32 +417,6 @@ impl PatchApplier {
         self.output_written = 0;
         self.target_size = 0;
         self.prepared = false;
-    }
-
-    /// Get patch info as JSON string.
-    #[wasm_bindgen]
-    pub fn get_patch_info(&self) -> Result<String, JsError> {
-        if !self.patch_loaded {
-            return Err(JsError::new("Patch not loaded"));
-        }
-
-        let patch = Patch::deserialize(&self.patch_data)
-            .map_err(|e| JsError::new(&format!("Invalid patch: {}", e)))?;
-
-        let stats = patch.stats();
-
-        Ok(format!(
-            r#"{{"sourceSize":{},"sourceHash":{},"targetSize":{},"chunkSize":{},"copyCount":{},"copyBytes":{},"insertCount":{},"insertBytes":{},"totalInstructions":{}}}"#,
-            patch.source_size,
-            format!("{:016x}", patch.source_hash),
-            patch.target_size,
-            patch.chunk_size,
-            stats.copy_count,
-            stats.copy_bytes,
-            stats.insert_count,
-            stats.insert_bytes,
-            patch.instruction_count(),
-        ))
     }
 }
 
@@ -519,7 +447,7 @@ mod tests {
         let source = b"aaaabbbbccccdddd";
         let target = b"aaaaNEWWccccdddd";
 
-        let mut builder = PatchBuilder::with_chunk_size(4);
+        let mut builder = PatchBuilder::new();
         builder.add_source_chunk(source);
         builder.finalize_source();
         builder.add_target_chunk(target);
@@ -571,7 +499,7 @@ mod tests {
         let source = b"aaaabbbbccccdddd";
         let target = b"aaaabbbbccccdddd";
 
-        let mut builder = PatchBuilder::with_chunk_size(4);
+        let mut builder = PatchBuilder::new();
 
         // Add source in chunks
         builder.add_source_chunk(b"aaaa");
@@ -630,23 +558,6 @@ mod tests {
 
         assert_eq!(builder.source_size(), 0);
         assert_eq!(builder.target_size(), 0);
-    }
-
-    #[test]
-    fn test_progress() {
-        let mut builder = PatchBuilder::new();
-
-        assert_eq!(builder.progress(100, 100), 0.0);
-
-        builder.add_source_chunk(&[0u8; 50]);
-        assert_eq!(builder.progress(100, 100), 25.0);
-
-        builder.add_source_chunk(&[0u8; 50]);
-        builder.finalize_source();
-        assert_eq!(builder.progress(100, 100), 50.0);
-
-        builder.add_target_chunk(&[0u8; 100]);
-        assert_eq!(builder.progress(100, 100), 100.0);
     }
 
     #[test]

@@ -1,11 +1,3 @@
-//! Buffer utilities for chunked/streaming processing.
-//!
-//! Provides memory-efficient handling of large data by working
-//! with chunks instead of loading everything into a single buffer.
-
-/// Default chunk size for splitting data (1MB)
-pub const DEFAULT_BUFFER_CHUNK_SIZE: usize = 1024 * 1024;
-
 /// A buffer that stores data in chunks for memory-efficient processing.
 ///
 /// Instad of storing all data in a single contiguous Vec<u8>
@@ -24,17 +16,6 @@ impl ChunkBuffer {
     pub fn new() -> Self {
         Self {
             chunks: Vec::new(),
-            total_size: 0,
-        }
-    }
-
-    /// Create a ChunkBuffer with pre-allocated capacity for chunks.
-    ///
-    /// # Arguments
-    /// * `chunk_capacity` - Expected number of chunks
-    pub fn with_capacity(chunk_capacity: usize) -> Self {
-        Self {
-            chunks: Vec::with_capacity(chunk_capacity),
             total_size: 0,
         }
     }
@@ -60,16 +41,6 @@ impl ChunkBuffer {
     /// Get total size of all data in buffer.
     pub fn total_size(&self) -> usize {
         self.total_size
-    }
-
-    /// Get number of chunks
-    pub fn chunk_count(&self) -> usize {
-        self.chunks.len()
-    }
-
-    /// Check if buffer is empty
-    pub fn is_empty(&self) -> bool {
-        self.total_size == 0
     }
 
     /// Get a reference to a specific chunk.
@@ -160,35 +131,6 @@ impl Default for ChunkBuffer {
     }
 }
 
-/// Split a large data slice into smaller chunks.
-///
-/// # Arguments
-/// * `data` - Data to split
-/// * `chunk_size` - Maximum size of each chunk
-///
-/// # Returns
-/// Vector of chunks
-pub fn split_into_chunks(data: &[u8], chunk_size: usize) -> Vec<Vec<u8>> {
-    if chunk_size == 0 {
-        return vec![data.to_vec()];
-    }
-
-    data.chunks(chunk_size).map(|c| c.to_vec()).collect()
-}
-
-/// Create a ChunkBuffer from a data slice by splitting it.
-///
-/// # Arguments
-/// * `data` - Data to convert
-/// * `chunk_size` - Size of each chunk
-pub fn chunk_buffer_from_slice(data: &[u8], chunk_size: usize) -> ChunkBuffer {
-    let mut buffer = ChunkBuffer::new();
-    for chunk in data.chunks(chunk_size) {
-        buffer.push_slice(chunk);
-    }
-    buffer
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,9 +138,9 @@ mod tests {
     #[test]
     fn test_new_buffer() {
         let buffer = ChunkBuffer::new();
-        assert!(buffer.is_empty());
+        assert!(buffer.total_size == 0);
         assert_eq!(buffer.total_size(), 0);
-        assert_eq!(buffer.chunk_count(), 0);
+        assert_eq!(buffer.chunks.len(), 0);
     }
 
     #[test]
@@ -208,8 +150,8 @@ mod tests {
         buffer.push(vec![6, 7, 8]);
 
         assert_eq!(buffer.total_size(), 8);
-        assert_eq!(buffer.chunk_count(), 2);
-        assert!(!buffer.is_empty());
+        assert_eq!(buffer.chunks.len(), 2);
+        assert!(!(buffer.total_size == 0));
     }
 
     #[test]
@@ -219,7 +161,7 @@ mod tests {
         buffer.push_slice(b" world");
 
         assert_eq!(buffer.total_size(), 11);
-        assert_eq!(buffer.chunk_count(), 2);
+        assert_eq!(buffer.chunks.len(), 2);
     }
 
     #[test]
@@ -312,58 +254,8 @@ mod tests {
     }
 
     #[test]
-    fn test_split_into_chunks() {
-        let data = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-        let chunks = split_into_chunks(&data, 3);
-
-        assert_eq!(chunks.len(), 4);
-        assert_eq!(chunks[0], vec![1, 2, 3]);
-        assert_eq!(chunks[1], vec![4, 5, 6]);
-        assert_eq!(chunks[2], vec![7, 8, 9]);
-        assert_eq!(chunks[3], vec![10]);
-    }
-
-    #[test]
-    fn test_split_into_chunks_exact() {
-        let data = vec![1, 2, 3, 4, 5, 6];
-        let chunks = split_into_chunks(&data, 2);
-
-        assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0], vec![1, 2]);
-        assert_eq!(chunks[1], vec![3, 4]);
-        assert_eq!(chunks[2], vec![5, 6]);
-    }
-
-    #[test]
-    fn test_split_info_chunks_larger_than_data() {
-        let data = vec![1, 2, 3];
-        let chunks = split_into_chunks(&data, 10);
-
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0], vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn test_chunk_buffer_from_slice() {
-        let data = b"hello world, this is a test";
-        let buffer = chunk_buffer_from_slice(data, 5);
-
-        assert_eq!(buffer.total_size, data.len());
-        assert_eq!(buffer.chunk_count(), 6); // 27 : 5 = 5 full + 1 partial
-
-        // Verify merge gives back original
-        assert_eq!(buffer.merge(), data.to_vec());
-    }
-
-    #[test]
-    fn test_with_capacity() {
-        let buffer = ChunkBuffer::with_capacity(10);
-        assert!(buffer.is_empty());
-    }
-
-    #[test]
     fn test_default() {
         let buffer: ChunkBuffer = Default::default();
-        assert!(buffer.is_empty());
+        assert!(buffer.total_size == 0);
     }
 }
