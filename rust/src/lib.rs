@@ -508,10 +508,165 @@ impl Default for PatchApplier {
     }
 }
 
+/// Parse patch header and return JSON with metadata and instructions.
+/// This is a lightweight function for the TypeScript-based applier.
+/// Returns JSON string with structure:
+/// {
+///   "sourceSize": number,
+///   "sourceHash": string (hex),
+///   "targetSize": number,
+///   "instructions": [
+///     { "type": "copy", "offset": number, "length": number } |
+///     { "type": "insert", "patchOffset": number, "length": number }
+///   ]
+/// }
+#[wasm_bindgen]
+pub fn parse_patch_header(patch_data: &[u8]) -> Result<String, JsError> {
+    let metadata = PatchMetadata::parse(patch_data)
+        .map_err(|e| JsError::new(&format!("Failed to parse patch: {}", e)))?;
+
+    // Build JSON manually (no serde dependency needed)
+    let mut json = String::from("{");
+    json.push_str(&format!("\"sourceSize\":{},", metadata.source_size));
+    json.push_str(&format!(
+        "\"sourceHash\":\"{:016x}\",",
+        metadata.source_hash
+    ));
+    json.push_str(&format!("\"targetSize\":{},", metadata.target_size));
+    json.push_str("\"instructions\":[");
+
+    for (i, instr) in metadata.instructions.iter().enumerate() {
+        if i > 0 {
+            json.push(',');
+        }
+        match instr {
+            ParsedInstruction::Copy { offset, length } => {
+                json.push_str(&format!(
+                    "{{\"type\":\"copy\",\"offset\":{},\"length\":{}}}",
+                    offset, length
+                ));
+            }
+            ParsedInstruction::Insert {
+                patch_offset,
+                length,
+            } => {
+                json.push_str(&format!(
+                    "{{\"type\":\"insert\",\"patchOffset\":{},\"length\":{}}}",
+                    patch_offset, length
+                ));
+            }
+        }
+    }
+
+    json.push_str("]}");
+    Ok(json)
+}
+
+/// Parse ONLY the patch header (33 bytes) without parsing instructions.
+/// Returns JSON: { "sourceSize": number, "sourceHash": string, "targetSize": number, "headerSize": 33 }
+/// TypeScript will parse instructions directly from OPFS to avoid loading entire patch.
+#[wasm_bindgen]
+pub fn parse_patch_header_only(header_data: &[u8]) -> Result<String, JsError> {
+    if header_data.len() < 33 {
+        return Err(JsError::new(
+            "Header data too small (need at least 33 bytes)",
+        ));
+    }
+
+    // Validate magic
+    if &header_data[0..4] != b"PTCH" {
+        return Err(JsError::new("Invalid patch file: bad magic bytes"));
+    }
+
+    // Validate version
+    if header_data[4] != 1 {
+        return Err(JsError::new(&format!(
+            "Unsupported patch version: {} (expected 1)",
+            header_data[4]
+        )));
+    }
+
+    // Parse fields
+    let chunk_size = u32::from_le_bytes([
+        header_data[5],
+        header_data[6],
+        header_data[7],
+        header_data[8],
+    ]);
+    let source_size = u64::from_le_bytes([
+        header_data[9],
+        header_data[10],
+        header_data[11],
+        header_data[12],
+        header_data[13],
+        header_data[14],
+        header_data[15],
+        header_data[16],
+    ]);
+    let source_hash = u64::from_le_bytes([
+        header_data[17],
+        header_data[18],
+        header_data[19],
+        header_data[20],
+        header_data[21],
+        header_data[22],
+        header_data[23],
+        header_data[24],
+    ]);
+    let target_size = u64::from_le_bytes([
+        header_data[25],
+        header_data[26],
+        header_data[27],
+        header_data[28],
+        header_data[29],
+        header_data[30],
+        header_data[31],
+        header_data[32],
+    ]);
+
+    Ok(format!(
+        "{{\"sourceSize\":{},\"sourceHash\":\"{:016x}\",\"targetSize\":{},\"chunkSize\":{},\"headerSize\":33}}",
+        source_size, source_hash, target_size, chunk_size
+    ))
+}
+
 /// Get the library version
 #[wasm_bindgen]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// WASM-bindable streaming hash builder.
+/// Use this to calculate hash incrementally from JavaScript without BigInt allocations.
+#[wasm_bindgen]
+pub struct WasmHashBuilder {
+    inner: HashBuilder,
+}
+
+#[wasm_bindgen]
+impl WasmHashBuilder {
+    /// Create a new hash builder
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: HashBuilder::new(),
+        }
+    }
+
+    /// Update the hash with a chunk of data
+    pub fn update(&mut self, data: &[u8]) {
+        self.inner.update(data);
+    }
+
+    /// Finalize and return the hash as a hex string
+    pub fn finalize(&self) -> String {
+        format!("{:016x}", self.inner.finalize())
+    }
+
+    /// Finalize and return the hash as a u64 (for comparison)
+    pub fn finalize_u64(&self) -> u64 {
+        self.inner.finalize()
+    }
 }
 
 /// Calculate hash of data

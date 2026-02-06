@@ -131,9 +131,57 @@ export class PatchBuilder {
 }
 
 /**
+ * WASM-bindable streaming hash builder.
+ * Use this to calculate hash incrementally from JavaScript without BigInt allocations.
+ */
+export class WasmHashBuilder {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Finalize and return the hash as a hex string
+     */
+    finalize(): string;
+    /**
+     * Finalize and return the hash as a u64 (for comparison)
+     */
+    finalize_u64(): bigint;
+    /**
+     * Create a new hash builder
+     */
+    constructor();
+    /**
+     * Update the hash with a chunk of data
+     */
+    update(data: Uint8Array): void;
+}
+
+/**
  * Calculate hash of data
  */
 export function hash_data(data: Uint8Array): string;
+
+/**
+ * Parse patch header and return JSON with metadata and instructions.
+ * This is a lightweight function for the TypeScript-based applier.
+ * Returns JSON string with structure:
+ * {
+ *   "sourceSize": number,
+ *   "sourceHash": string (hex),
+ *   "targetSize": number,
+ *   "instructions": [
+ *     { "type": "copy", "offset": number, "length": number } |
+ *     { "type": "insert", "patchOffset": number, "length": number }
+ *   ]
+ * }
+ */
+export function parse_patch_header(patch_data: Uint8Array): string;
+
+/**
+ * Parse ONLY the patch header (33 bytes) without parsing instructions.
+ * Returns JSON: { "sourceSize": number, "sourceHash": string, "targetSize": number, "headerSize": 33 }
+ * TypeScript will parse instructions directly from OPFS to avoid loading entire patch.
+ */
+export function parse_patch_header_only(header_data: Uint8Array): string;
 
 /**
  * Get the library version
@@ -173,7 +221,14 @@ export interface InitOutput {
     readonly patchapplier_finalize_patch: (a: number) => [number, number];
     readonly patchapplier_remaining_output_size: (a: number) => bigint;
     readonly patchapplier_reset: (a: number) => void;
+    readonly parse_patch_header: (a: number, b: number) => [number, number, number, number];
+    readonly parse_patch_header_only: (a: number, b: number) => [number, number, number, number];
     readonly version: () => [number, number];
+    readonly __wbg_wasmhashbuilder_free: (a: number, b: number) => void;
+    readonly wasmhashbuilder_new: () => number;
+    readonly wasmhashbuilder_update: (a: number, b: number, c: number) => void;
+    readonly wasmhashbuilder_finalize: (a: number) => [number, number];
+    readonly wasmhashbuilder_finalize_u64: (a: number) => bigint;
     readonly hash_data: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

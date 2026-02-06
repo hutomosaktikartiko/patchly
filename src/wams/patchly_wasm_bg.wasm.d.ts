@@ -30,7 +30,14 @@ export const patchapplier_add_patch_chunk: (a: number, b: number, c: number) => 
 export const patchapplier_finalize_patch: (a: number) => [number, number];
 export const patchapplier_remaining_output_size: (a: number) => bigint;
 export const patchapplier_reset: (a: number) => void;
+export const parse_patch_header: (a: number, b: number) => [number, number, number, number];
+export const parse_patch_header_only: (a: number, b: number) => [number, number, number, number];
 export const version: () => [number, number];
+export const __wbg_wasmhashbuilder_free: (a: number, b: number) => void;
+export const wasmhashbuilder_new: () => number;
+export const wasmhashbuilder_update: (a: number, b: number, c: number) => void;
+export const wasmhashbuilder_finalize: (a: number) => [number, number];
+export const wasmhashbuilder_finalize_u64: (a: number) => bigint;
 export const hash_data: (a: number, b: number) => [number, number];
 export const __wbindgen_externrefs: WebAssembly.Table;
 export const __wbindgen_malloc: (a: number, b: number) => number;

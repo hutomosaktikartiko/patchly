@@ -271,6 +271,66 @@ export class PatchBuilder {
 if (Symbol.dispose) PatchBuilder.prototype[Symbol.dispose] = PatchBuilder.prototype.free;
 
 /**
+ * WASM-bindable streaming hash builder.
+ * Use this to calculate hash incrementally from JavaScript without BigInt allocations.
+ */
+export class WasmHashBuilder {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmHashBuilderFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmhashbuilder_free(ptr, 0);
+    }
+    /**
+     * Finalize and return the hash as a hex string
+     * @returns {string}
+     */
+    finalize() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.wasmhashbuilder_finalize(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Finalize and return the hash as a u64 (for comparison)
+     * @returns {bigint}
+     */
+    finalize_u64() {
+        const ret = wasm.wasmhashbuilder_finalize_u64(this.__wbg_ptr);
+        return BigInt.asUintN(64, ret);
+    }
+    /**
+     * Create a new hash builder
+     */
+    constructor() {
+        const ret = wasm.wasmhashbuilder_new();
+        this.__wbg_ptr = ret >>> 0;
+        WasmHashBuilderFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Update the hash with a chunk of data
+     * @param {Uint8Array} data
+     */
+    update(data) {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmhashbuilder_update(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmHashBuilder.prototype[Symbol.dispose] = WasmHashBuilder.prototype.free;
+
+/**
  * Calculate hash of data
  * @param {Uint8Array} data
  * @returns {string}
@@ -287,6 +347,71 @@ export function hash_data(data) {
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Parse patch header and return JSON with metadata and instructions.
+ * This is a lightweight function for the TypeScript-based applier.
+ * Returns JSON string with structure:
+ * {
+ *   "sourceSize": number,
+ *   "sourceHash": string (hex),
+ *   "targetSize": number,
+ *   "instructions": [
+ *     { "type": "copy", "offset": number, "length": number } |
+ *     { "type": "insert", "patchOffset": number, "length": number }
+ *   ]
+ * }
+ * @param {Uint8Array} patch_data
+ * @returns {string}
+ */
+export function parse_patch_header(patch_data) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(patch_data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_patch_header(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Parse ONLY the patch header (33 bytes) without parsing instructions.
+ * Returns JSON: { "sourceSize": number, "sourceHash": string, "targetSize": number, "headerSize": 33 }
+ * TypeScript will parse instructions directly from OPFS to avoid loading entire patch.
+ * @param {Uint8Array} header_data
+ * @returns {string}
+ */
+export function parse_patch_header_only(header_data) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(header_data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_patch_header_only(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 }
 
@@ -339,6 +464,9 @@ const PatchApplierFinalization = (typeof FinalizationRegistry === 'undefined')
 const PatchBuilderFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_patchbuilder_free(ptr >>> 0, 1));
+const WasmHashBuilderFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmhashbuilder_free(ptr >>> 0, 1));
 
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;

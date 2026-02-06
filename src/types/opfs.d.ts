@@ -5,3 +5,16 @@ interface FileSystemDirectoryHandle {
   keys(): AsyncIterableIterator<string>;
   values(): AsyncIterableIterator<FileSystemHandle>;
 }
+
+interface FileSystemFileHandle {
+  createSyncAccessHandle(): Promise<FileSystemSyncAccessHandle>;
+}
+
+interface FileSystemSyncAccessHandle {
+  read(buffer: ArrayBuffer | ArrayBufferView, options?: { at?: number }): number;
+  write(buffer: ArrayBuffer | ArrayBufferView, options?: { at?: number }): number;
+  truncate(size: number): void;
+  getSize(): number;
+  flush(): void;
+  close(): void;
+}
