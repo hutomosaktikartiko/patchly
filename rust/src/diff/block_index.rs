@@ -1,30 +1,40 @@
+//! Block index for efficient content matching.
+//!
+//! Builds a hash-to-offset index from source file blocks, enabling
+//! O(1) lookups during diff generation.
+
 use super::rolling_hash::RollingHash;
 use crate::DEFAULT_CHUNK_SIZE;
 use std::collections::HashMap;
 
-/// Memory-efficient block index that only stores hash -> offset mappings.
+/// Memory-efficient block index that stores hash-to-offset mappings.
 ///
-/// # memory Usage
+/// # Memory Usage
+///
 /// - Per block: ~12 bytes (u32 hash + u64 offset)
 /// - 1GB file with 4KB blocks = ~250k blocks = ~3MB index
 pub struct BlockIndex {
-    // Block size used for chunking
+    /// Block size used for chunking.
     block_size: usize,
-    // Hash table: weak_hash -> list of offsets with that hash
+    /// Hash table: weak_hash -> list of offsets with that hash.
     index: HashMap<u32, Vec<u64>>,
-    // Total bytes indexed so far
+    /// Total bytes indexed so far.
     bytes_indexed: u64,
-    // Buffer for incomplete block from previous chunk
+    /// Buffer for incomplete block from previous chunk.
     pending: Vec<u8>,
 }
 
 impl BlockIndex {
-    /// Create a new empty BlockIndex.
+    /// Creates a new empty `BlockIndex` with default block size.
     pub fn new() -> Self {
         Self::with_block_size(DEFAULT_CHUNK_SIZE)
     }
 
-    /// Create a new BlockIndex with custom block size
+    /// Creates a new `BlockIndex` with custom block size.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_size` - Size in bytes for each block.
     pub fn with_block_size(block_size: usize) -> Self {
         Self {
             block_size,
@@ -34,11 +44,13 @@ impl BlockIndex {
         }
     }
 
-    /// Add a chunk of source data to the index.
-    /// Only stores hash -> offset mapping, discards raw data.
+    /// Adds a chunk of source data to the index.
+    ///
+    /// Only stores hash-to-offset mapping; discards raw data.
     ///
     /// # Arguments
-    /// * `chunk` - Raw bytes to index
+    ///
+    /// * `chunk` - Raw bytes to index.
     pub fn add_chunk(&mut self, chunk: &[u8]) {
         let mut hasher = RollingHash::new(self.block_size);
 
@@ -68,42 +80,48 @@ impl BlockIndex {
         }
     }
 
-    /// Finalize indexing. Call after all source chunks added.
+    /// Finalizes indexing after all source chunks have been added.
+    ///
     /// Note: Partial blocks at the end are NOT indexed.
-    /// Returns total bytes indexed
+    ///
+    /// # Returns
+    ///
+    /// Total bytes indexed.
     pub fn finalize(&mut self) -> u64 {
-        // Clear pending buffer
         self.pending.clear();
         self.bytes_indexed
     }
 
-    /// Look up offsets where a given hash appears.
-    /// Returns empty slice if hash not found.
+    /// Looks up offsets where a given hash appears.
+    ///
+    /// # Returns
+    ///
+    /// Slice of offsets, or empty slice if hash not found.
     pub fn lookup(&self, hash: u32) -> &[u64] {
         self.index.get(&hash).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
-    /// Get the block size
+    /// Returns the block size.
     pub fn block_size(&self) -> usize {
         self.block_size
     }
 
-    /// Get number of unique hashes in index.
+    /// Returns the number of unique hashes in the index.
     pub fn unique_hash_count(&self) -> usize {
         self.index.len()
     }
 
-    /// Get total number of blocks indexed.
+    /// Returns the total number of blocks indexed.
     pub fn block_count(&self) -> usize {
         self.index.values().map(|v| v.len()).sum()
     }
 
-    /// Get total bytes indexed.
+    /// Returns the total bytes indexed.
     pub fn bytes_indexed(&self) -> u64 {
         self.bytes_indexed
     }
 
-    /// Clear the index and reset state.
+    /// Clears the index and resets state.
     pub fn clear(&mut self) {
         self.index.clear();
         self.bytes_indexed = 0;
@@ -181,7 +199,7 @@ mod tests {
     #[test]
     fn test_duplicate_blocks() {
         let mut index = BlockIndex::with_block_size(4);
-        // "aaaa" appears twice at offset 0 amd 8
+        // "aaaa" appears twice at offset 0 and 8
         index.add_chunk(b"aaaabbbbaaaa");
         index.finalize();
 

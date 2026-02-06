@@ -1,26 +1,31 @@
+//! Streaming diff generator for patch creation.
+//!
+//! Processes target file chunks and generates serialized patch instructions
+//! by comparing against a pre-built source file index.
+
 use super::block_index::BlockIndex;
 use super::rolling_hash::RollingHash;
-
-/// Instruction type markers for serialization
-const TYPE_COPY: u8 = 0x01;
-const TYPE_INSERT: u8 = 0x02;
+use crate::format::patch_format::{TYPE_COPY, TYPE_INSERT};
 
 /// Streaming diff generator that outputs serialized patch data directly.
+///
+/// Compares target file data against a source file's block index to find
+/// matching blocks (COPY) and new data (INSERT).
 pub struct StreamingDiff {
-    // Block index built from source file
+    /// Block index built from source file.
     index: BlockIndex,
-    // Block size for matching
+    /// Block size for matching.
     block_size: usize,
-    // Buffer for pending target data to process
+    /// Buffer for pending target data to process.
     buffer: Vec<u8>,
-    // Pending INSERT data
+    /// Pending INSERT data.
     insert_buffer: Vec<u8>,
-    // Serialized output ready to be consumed
+    /// Serialized output ready to be consumed.
     output_buffer: Vec<u8>,
 }
 
 impl StreamingDiff {
-    /// Create a new StreamingDiff from a BlockIndex.
+    /// Creates a new `StreamingDiff` from a `BlockIndex`.
     pub fn new(index: BlockIndex) -> Self {
         let block_size = index.block_size();
 
@@ -33,14 +38,15 @@ impl StreamingDiff {
         }
     }
 
-    /// Process a chunk of target data.
-    /// This may generate serialized output in the output buffer
+    /// Processes a chunk of target data.
+    ///
+    /// This may generate serialized output in the output buffer.
     pub fn process_target_chunk(&mut self, chunk: &[u8]) {
         self.buffer.extend_from_slice(chunk);
         self.process_buffer();
     }
 
-    /// Process buffered data using rolling hash
+    /// Processes buffered data using rolling hash.
     fn process_buffer(&mut self) {
         if self.buffer.len() < self.block_size {
             return;
@@ -57,10 +63,10 @@ impl StreamingDiff {
             let matched_offset = self.index.lookup(current_hash).first().copied();
 
             if let Some(source_offset) = matched_offset {
-                // Found a match! Flush pending INSERT data first
+                // Found a match - flush pending INSERT data first
                 self.flush_insert_buffer();
 
-                // Emit COPY instruction (serialize directly)
+                // Emit COPY instruction
                 self.emit_copy(source_offset, self.block_size as u32);
 
                 // Skip past the matched block
@@ -71,11 +77,11 @@ impl StreamingDiff {
                     current_hash = hasher.hash_chunk(&self.buffer[pos..pos + self.block_size]);
                 }
             } else {
-                // Add byte to INSERT buffer
+                // No match - add byte to INSERT buffer
                 self.insert_buffer.push(self.buffer[pos]);
                 pos += 1;
 
-                // Roll hash forward (O(1) operation!)
+                // Roll hash forward - O(1) operation
                 if pos + self.block_size <= self.buffer.len() {
                     let old_byte = self.buffer[pos - 1];
                     let new_byte = self.buffer[pos + self.block_size - 1];
@@ -88,29 +94,28 @@ impl StreamingDiff {
         self.buffer = self.buffer[pos..].to_vec();
     }
 
-    /// Flust pending INSERT buffer to instructions
+    /// Flushes pending INSERT data to output buffer.
     fn flush_insert_buffer(&mut self) {
         if !self.insert_buffer.is_empty() {
-            // Serialize INSERT instruction: type(1) + length(4) + data
+            // Serialize INSERT: type(1) + length(4) + data
             self.output_buffer.push(TYPE_INSERT);
             self.output_buffer
                 .extend_from_slice(&(self.insert_buffer.len() as u32).to_le_bytes());
             self.output_buffer.extend_from_slice(&self.insert_buffer);
 
-            // Clear the insert buffer
             self.insert_buffer.clear();
         }
     }
 
-    /// Emit a COPY instruction by serializing to output
+    /// Emits a COPY instruction to output buffer.
     fn emit_copy(&mut self, offset: u64, length: u32) {
-        // Serialize COPY instruction: type(1) + offset(8) + length(4)
+        // Serialize COPY: type(1) + offset(8) + length(4)
         self.output_buffer.push(TYPE_COPY);
         self.output_buffer.extend_from_slice(&offset.to_le_bytes());
         self.output_buffer.extend_from_slice(&length.to_le_bytes());
     }
 
-    /// Finalize processing - flush any remaining data.
+    /// Finalizes processing and flushes remaining data.
     pub fn finalize(&mut self) {
         // Any remaining bytes in buffer go to INSERT
         self.insert_buffer.extend_from_slice(&self.buffer);
@@ -120,18 +125,19 @@ impl StreamingDiff {
         self.flush_insert_buffer();
     }
 
-    /// Take the output buffer (transfers ownership)
-    /// Returns serliazed patch instructions ready to write
+    /// Takes the output buffer, transferring ownership.
+    ///
+    /// Returns serialized patch instructions ready to write.
     pub fn take_output(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.output_buffer)
     }
 
-    /// Get current output buffer size.
+    /// Returns the current output buffer size.
     pub fn output_len(&self) -> usize {
         self.output_buffer.len()
     }
 
-    /// Check is there's pending outout to consume.
+    /// Checks if there's pending output to consume.
     pub fn has_output(&self) -> bool {
         !self.output_buffer.is_empty()
     }
@@ -174,7 +180,7 @@ mod tests {
     #[test]
     fn test_insert_output() {
         let source = b"aaaabbbb";
-        let target = b"xxxx"; // completely different
+        let target = b"xxxx"; // Completely different
         let index = build_index(source, 4);
 
         let mut diff = StreamingDiff::new(index);

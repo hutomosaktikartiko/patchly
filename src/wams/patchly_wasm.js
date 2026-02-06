@@ -1,152 +1,10 @@
 /* @ts-self-types="./patchly_wasm.d.ts" */
 
 /**
- * Applier for pacthes with streaming output supoort.
- */
-export class PatchApplier {
-    __destroy_into_raw() {
-        const ptr = this.__wbg_ptr;
-        this.__wbg_ptr = 0;
-        PatchApplierFinalization.unregister(this);
-        return ptr;
-    }
-    free() {
-        const ptr = this.__destroy_into_raw();
-        wasm.__wbg_patchapplier_free(ptr, 0);
-    }
-    /**
-     * Add a chunk of patch data.
-     * @param {Uint8Array} chunk
-     */
-    add_patch_chunk(chunk) {
-        const ptr0 = passArray8ToWasm0(chunk, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.patchapplier_add_patch_chunk(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * Add a chunk of source (old file) data.
-     * @param {Uint8Array} chunk
-     */
-    add_source_chunk(chunk) {
-        const ptr0 = passArray8ToWasm0(chunk, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.patchapplier_add_source_chunk(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * Get expected source size from patch metadata.
-     * @returns {bigint}
-     */
-    expected_source_size() {
-        const ret = wasm.patchapplier_expected_source_size(this.__wbg_ptr);
-        if (ret[2]) {
-            throw takeFromExternrefTable0(ret[1]);
-        }
-        return BigInt.asUintN(64, ret[0]);
-    }
-    /**
-     * Get expected target size from patch metadata.
-     * @returns {bigint}
-     */
-    expected_target_size() {
-        const ret = wasm.patchapplier_expected_target_size(this.__wbg_ptr);
-        if (ret[2]) {
-            throw takeFromExternrefTable0(ret[1]);
-        }
-        return BigInt.asUintN(64, ret[0]);
-    }
-    /**
-     * Finalize patch loading and parse header.
-     */
-    finalize_patch() {
-        const ret = wasm.patchapplier_finalize_patch(this.__wbg_ptr);
-        if (ret[1]) {
-            throw takeFromExternrefTable0(ret[0]);
-        }
-    }
-    /**
-     * Check if there's more output to read.
-     * @returns {boolean}
-     */
-    has_more_output() {
-        const ret = wasm.patchapplier_has_more_output(this.__wbg_ptr);
-        return ret !== 0;
-    }
-    /**
-     * Create a new PatchApplier
-     */
-    constructor() {
-        const ret = wasm.patchapplier_new();
-        this.__wbg_ptr = ret >>> 0;
-        PatchApplierFinalization.register(this, this.__wbg_ptr, this);
-        return this;
-    }
-    /**
-     * Get next chunk of output data.
-     * @param {number} max_size
-     * @returns {Uint8Array}
-     */
-    next_output_chunk(max_size) {
-        const ret = wasm.patchapplier_next_output_chunk(this.__wbg_ptr, max_size);
-        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        return v1;
-    }
-    /**
-     * Prepare for streaming output.
-     */
-    prepare() {
-        const ret = wasm.patchapplier_prepare(this.__wbg_ptr);
-        if (ret[1]) {
-            throw takeFromExternrefTable0(ret[0]);
-        }
-    }
-    /**
-     * Get remaining bytes to output
-     * @returns {bigint}
-     */
-    remaining_output_size() {
-        const ret = wasm.patchapplier_remaining_output_size(this.__wbg_ptr);
-        return BigInt.asUintN(64, ret);
-    }
-    /**
-     * Reset the applier for reuse.
-     */
-    reset() {
-        wasm.patchapplier_reset(this.__wbg_ptr);
-    }
-    /**
-     * Set the patch data.
-     * @param {Uint8Array} patch_data
-     */
-    set_patch(patch_data) {
-        const ptr0 = passArray8ToWasm0(patch_data, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.patchapplier_set_patch(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * Get current source size.
-     * @returns {number}
-     */
-    source_size() {
-        const ret = wasm.patchapplier_source_size(this.__wbg_ptr);
-        return ret >>> 0;
-    }
-    /**
-     * Validate source file before applying.
-     * @returns {boolean}
-     */
-    validate_source() {
-        const ret = wasm.patchapplier_validate_source(this.__wbg_ptr);
-        if (ret[2]) {
-            throw takeFromExternrefTable0(ret[1]);
-        }
-        return ret[0] !== 0;
-    }
-}
-if (Symbol.dispose) PatchApplier.prototype[Symbol.dispose] = PatchApplier.prototype.free;
-
-/**
- * Streaming patch build
+ * Streaming binary patch builder.
+ *
+ * Processes source and target files in chunks to generate a binary patch.
+ * Designed for memory-efficient handling of large files (multi-GB).
  */
 export class PatchBuilder {
     __destroy_into_raw() {
@@ -160,7 +18,7 @@ export class PatchBuilder {
         wasm.__wbg_patchbuilder_free(ptr, 0);
     }
     /**
-     * Add a chunk of source (old file) data.
+     * Adds a chunk of source (old file) data.
      * @param {Uint8Array} chunk
      */
     add_source_chunk(chunk) {
@@ -169,8 +27,9 @@ export class PatchBuilder {
         wasm.patchbuilder_add_source_chunk(this.__wbg_ptr, ptr0, len0);
     }
     /**
-     * Add a chunk of target (new file) data.
-     * This immediately generates patch output - call flush_output() to retrieve it.
+     * Adds a chunk of target (new file) data.
+     *
+     * Generates patch output immediately; call `flush_output()` to retrieve it.
      * @param {Uint8Array} chunk
      */
     add_target_chunk(chunk) {
@@ -179,7 +38,8 @@ export class PatchBuilder {
         wasm.patchbuilder_add_target_chunk(this.__wbg_ptr, ptr0, len0);
     }
     /**
-     * Check if source and target files are identical.
+     * Checks if source and target files are identical.
+     *
      * Only accurate after all data has been processed.
      * @returns {boolean}
      */
@@ -188,20 +48,22 @@ export class PatchBuilder {
         return ret !== 0;
     }
     /**
-     * Finalize source processing.
+     * Finalizes source processing.
      */
     finalize_source() {
         wasm.patchbuilder_finalize_source(this.__wbg_ptr);
     }
     /**
-     * Finalize target processing.
+     * Finalizes target processing.
+     *
      * Call this after all target chunks have been added.
      */
     finalize_target() {
         wasm.patchbuilder_finalize_target(this.__wbg_ptr);
     }
     /**
-     * Get next chunk of patch output.
+     * Returns the next chunk of patch output.
+     *
      * Returns serialized patch data ready to write to file.
      * @param {number} max_size
      * @returns {Uint8Array}
@@ -213,7 +75,7 @@ export class PatchBuilder {
         return v1;
     }
     /**
-     * Check if there's patch output available to read.
+     * Checks if there's patch output available to read.
      * @returns {boolean}
      */
     has_output() {
@@ -221,7 +83,7 @@ export class PatchBuilder {
         return ret !== 0;
     }
     /**
-     * Create a new PatchBuilder with default chunk size
+     * Creates a new `PatchBuilder` with default chunk size.
      */
     constructor() {
         const ret = wasm.patchbuilder_new();
@@ -230,7 +92,7 @@ export class PatchBuilder {
         return this;
     }
     /**
-     * Get approximate pending output size
+     * Returns the approximate pending output size.
      * @returns {number}
      */
     pending_output_size() {
@@ -238,21 +100,22 @@ export class PatchBuilder {
         return ret >>> 0;
     }
     /**
-     * Reset the builder for reuse.
+     * Resets the builder for reuse.
      */
     reset() {
         wasm.patchbuilder_reset(this.__wbg_ptr);
     }
     /**
-     * Set the expected total target size.
-     * Must be called before add_target_chunk() for proper header generation.
+     * Sets the expected total target size.
+     *
+     * Must be called before `add_target_chunk()` for proper header generation.
      * @param {bigint} size
      */
     set_target_size(size) {
         wasm.patchbuilder_set_target_size(this.__wbg_ptr, size);
     }
     /**
-     * Get current source size (bytes received so far).
+     * Returns the current source size in bytes.
      * @returns {number}
      */
     source_size() {
@@ -260,7 +123,7 @@ export class PatchBuilder {
         return ret >>> 0;
     }
     /**
-     * Get current target size (bytes received so far).
+     * Returns the current target size in bytes.
      * @returns {number}
      */
     target_size() {
@@ -272,28 +135,29 @@ if (Symbol.dispose) PatchBuilder.prototype[Symbol.dispose] = PatchBuilder.protot
 
 /**
  * WASM-bindable streaming hash builder.
+ *
  * Use this to calculate hash incrementally from JavaScript without BigInt allocations.
  */
-export class WasmHashBuilder {
+export class StreamingHasher {
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
-        WasmHashBuilderFinalization.unregister(this);
+        StreamingHasherFinalization.unregister(this);
         return ptr;
     }
     free() {
         const ptr = this.__destroy_into_raw();
-        wasm.__wbg_wasmhashbuilder_free(ptr, 0);
+        wasm.__wbg_streaminghasher_free(ptr, 0);
     }
     /**
-     * Finalize and return the hash as a hex string
+     * Finalizes and returns the hash as a hex string.
      * @returns {string}
      */
     finalize() {
         let deferred1_0;
         let deferred1_1;
         try {
-            const ret = wasm.wasmhashbuilder_finalize(this.__wbg_ptr);
+            const ret = wasm.streaminghasher_finalize(this.__wbg_ptr);
             deferred1_0 = ret[0];
             deferred1_1 = ret[1];
             return getStringFromWasm0(ret[0], ret[1]);
@@ -302,36 +166,36 @@ export class WasmHashBuilder {
         }
     }
     /**
-     * Finalize and return the hash as a u64 (for comparison)
+     * Finalizes and returns the hash as a u64 for comparison.
      * @returns {bigint}
      */
     finalize_u64() {
-        const ret = wasm.wasmhashbuilder_finalize_u64(this.__wbg_ptr);
+        const ret = wasm.streaminghasher_finalize_u64(this.__wbg_ptr);
         return BigInt.asUintN(64, ret);
     }
     /**
-     * Create a new hash builder
+     * Creates a new hash builder.
      */
     constructor() {
-        const ret = wasm.wasmhashbuilder_new();
+        const ret = wasm.streaminghasher_new();
         this.__wbg_ptr = ret >>> 0;
-        WasmHashBuilderFinalization.register(this, this.__wbg_ptr, this);
+        StreamingHasherFinalization.register(this, this.__wbg_ptr, this);
         return this;
     }
     /**
-     * Update the hash with a chunk of data
+     * Updates the hash with a chunk of data.
      * @param {Uint8Array} data
      */
     update(data) {
         const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        wasm.wasmhashbuilder_update(this.__wbg_ptr, ptr0, len0);
+        wasm.streaminghasher_update(this.__wbg_ptr, ptr0, len0);
     }
 }
-if (Symbol.dispose) WasmHashBuilder.prototype[Symbol.dispose] = WasmHashBuilder.prototype.free;
+if (Symbol.dispose) StreamingHasher.prototype[Symbol.dispose] = StreamingHasher.prototype.free;
 
 /**
- * Calculate hash of data
+ * Calculates hash of data and returns it as a hex string.
  * @param {Uint8Array} data
  * @returns {string}
  */
@@ -351,45 +215,9 @@ export function hash_data(data) {
 }
 
 /**
- * Parse patch header and return JSON with metadata and instructions.
- * This is a lightweight function for the TypeScript-based applier.
- * Returns JSON string with structure:
- * {
- *   "sourceSize": number,
- *   "sourceHash": string (hex),
- *   "targetSize": number,
- *   "instructions": [
- *     { "type": "copy", "offset": number, "length": number } |
- *     { "type": "insert", "patchOffset": number, "length": number }
- *   ]
- * }
- * @param {Uint8Array} patch_data
- * @returns {string}
- */
-export function parse_patch_header(patch_data) {
-    let deferred3_0;
-    let deferred3_1;
-    try {
-        const ptr0 = passArray8ToWasm0(patch_data, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.parse_patch_header(ptr0, len0);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
-        if (ret[3]) {
-            ptr2 = 0; len2 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
-    } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
-    }
-}
-
-/**
- * Parse ONLY the patch header (33 bytes) without parsing instructions.
- * Returns JSON: { "sourceSize": number, "sourceHash": string, "targetSize": number, "headerSize": 33 }
+ * Parses only the patch header (33 bytes) without parsing instructions.
+ *
+ * Returns JSON with sourceSize, sourceHash, targetSize, chunkSize, and headerSize.
  * TypeScript will parse instructions directly from OPFS to avoid loading entire patch.
  * @param {Uint8Array} header_data
  * @returns {string}
@@ -416,7 +244,7 @@ export function parse_patch_header_only(header_data) {
 }
 
 /**
- * Get the library version
+ * Returns the library version.
  * @returns {string}
  */
 export function version() {
@@ -458,15 +286,12 @@ function __wbg_get_imports() {
     };
 }
 
-const PatchApplierFinalization = (typeof FinalizationRegistry === 'undefined')
-    ? { register: () => {}, unregister: () => {} }
-    : new FinalizationRegistry(ptr => wasm.__wbg_patchapplier_free(ptr >>> 0, 1));
 const PatchBuilderFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_patchbuilder_free(ptr >>> 0, 1));
-const WasmHashBuilderFinalization = (typeof FinalizationRegistry === 'undefined')
+const StreamingHasherFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
-    : new FinalizationRegistry(ptr => wasm.__wbg_wasmhashbuilder_free(ptr >>> 0, 1));
+    : new FinalizationRegistry(ptr => wasm.__wbg_streaminghasher_free(ptr >>> 0, 1));
 
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;

@@ -61,10 +61,6 @@ patchly/
 │       ├─ format/
 │       │   ├─ mod.rs
 │       │   └─ patch_format.rs    # Patch serialization & FNV-1a hashing
-│       │
-│       └─ utils/
-│           ├─ mod.rs
-│           └─ buffer.rs          # ChunkBuffer for streaming
 │
 └─ scripts/
     └─ build-wasm.sh
@@ -187,7 +183,7 @@ User selects source file (original) + patch file (.patch)
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │  Step 3: Stream source file to OPFS temp                        │
-│          → WasmHashBuilder for FNV-1a (native u64, zero alloc)  │
+│          → StreamingHasher for FNV-1a (native u64, zero alloc)  │
 │          → Validate hash matches patch header                   │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
@@ -256,7 +252,7 @@ Speed: ~8 seconds for 1.8GB data
 - [x] COPY/INSERT instruction generation
 - [x] Deterministic patch output
 - [x] Streaming architecture (no full file in memory)
-- [x] WasmHashBuilder for zero-allocation hashing
+- [x] StreamingHasher for zero-allocation hashing
 
 ### Patch Application
 

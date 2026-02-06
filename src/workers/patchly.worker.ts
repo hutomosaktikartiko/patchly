@@ -1,28 +1,74 @@
+/**
+ * Patchly Web Worker
+ * 
+ * Handles patch creation and application in a separate thread.
+ * Uses OPFS for memory-efficient streaming of large files.
+ */
+
 import { formatBytes } from '../utils/bytes';
-import { createOpfsFile, streamFileToOpfsNoHash, getSyncAccessHandle, safeDeleteOpfsFile } from '../utils/opfs';
-import init, {PatchBuilder, version, hash_data, parse_patch_header_only, WasmHashBuilder} from '../wams/patchly_wasm.js';
+import { createOpfsFile, streamFileToOpfs, getSyncAccessHandle, safeDeleteOpfsFile } from '../utils/opfs';
+import init, { PatchBuilder, version, hash_data, parse_patch_header_only, StreamingHasher } from '../wams/patchly_wasm.js';
 import type { WorkerMessage, WorkerResponse } from './types';
 
-// Chunk size for writing to OPFS (1MB)
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** Chunk size for batched OPFS writes (1MB). */
 const WRITE_CHUNK_SIZE = 1024 * 1024;
+
+/** Size of reusable read buffer for small reads (64KB). */
+const SMALL_READ_SIZE = 64 * 1024;
+
+/** Patch header size in bytes. */
+const HEADER_SIZE = 33;
+
+/** COPY instruction type marker. */
+const TYPE_COPY = 0x01;
+
+/** INSERT instruction type marker. */
+const TYPE_INSERT = 0x02;
+
+/** Progress update interval in milliseconds. */
+const PROGRESS_INTERVAL_MS = 100;
+
+/** Temp file names for OPFS operations. */
+const TEMP_FILES = {
+  SOURCE: '_source.tmp',
+  PATCH: '_patch.tmp',
+} as const;
+
+// ============================================================================
+// State
+// ============================================================================
 
 let wasmInitialized = false;
 
-/// Send message to main thread
-function send(msg: WorkerResponse) {
+// ============================================================================
+// Utilities
+// ============================================================================
+
+/** Sends a message to the main thread. */
+function send(msg: WorkerResponse): void {
   self.postMessage(msg);
 }
 
-/// Initialize WASM
-async function initWasm() {
+/** Initializes the WASM module. */
+async function initWasm(): Promise<void> {
   if (wasmInitialized) return;
 
   await init();
   wasmInitialized = true;
-  send ({ type: 'ready' });
+  send({ type: 'ready' });
 }
 
-/// Read file in chunks and feed to callback
+/**
+ * Reads a file in chunks and feeds each chunk to a callback.
+ * 
+ * @param file - File to read.
+ * @param onChunk - Callback for each chunk.
+ * @param onProgress - Optional progress callback (0-100).
+ */
 async function readFileChunked(
   file: File,
   onChunk: (chunk: Uint8Array) => void,
@@ -38,19 +84,32 @@ async function readFileChunked(
     onChunk(value);
     bytesRead += value.length;
 
-    if (onProgress) {
-      onProgress((bytesRead / file.size) * 100);
-    }
+    onProgress?.((bytesRead / file.size) * 100);
   }
 }
 
-/// Create patch operation
-async function createPatch(sourceFile: File, targetFile: File, outputName: string) {
+// ============================================================================
+// Patch Creation
+// ============================================================================
+
+/**
+ * Creates a binary patch from source and target files.
+ * 
+ * @param sourceFile - Original file.
+ * @param targetFile - Modified file.
+ * @param outputName - Output filename in OPFS.
+ */
+async function createPatch(
+  sourceFile: File,
+  targetFile: File,
+  outputName: string
+): Promise<void> {
   try {
     const builder = new PatchBuilder();
 
-    // Read and index source file
+    // Phase 1: Index source file (0-40%)
     send({ type: 'progress', stage: 'Indexing source', percent: 0 });
+    
     await readFileChunked(sourceFile, (chunk) => {
       builder.add_source_chunk(chunk);
       send({
@@ -61,28 +120,24 @@ async function createPatch(sourceFile: File, targetFile: File, outputName: strin
       });
     });
 
-    // Finalize source
     builder.finalize_source();
     send({ type: 'progress', stage: 'Source indexed', percent: 40 });
 
     // Set target size for header
     builder.set_target_size(BigInt(targetFile.size));
 
-    // Open output file for streaming
+    // Phase 2: Process target file (40-90%)
     const writable = await createOpfsFile(outputName);
     let totalWritten = 0;
-
-    // Process target file
     const reader = targetFile.stream().getReader();
     
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      // Process this chunk
       builder.add_target_chunk(value);
 
-      // Flush any available output
+      // Flush output when buffer is large enough
       while (builder.has_output() && builder.pending_output_size() >= WRITE_CHUNK_SIZE) {
         const patchChunk = builder.flush_output(WRITE_CHUNK_SIZE);
         if (patchChunk.length === 0) break;
@@ -91,17 +146,15 @@ async function createPatch(sourceFile: File, targetFile: File, outputName: strin
         totalWritten += patchChunk.length;
       }
 
-      // Report progress
-      const percent = 40 + (builder.target_size() / targetFile.size) * 50;
       send({
         type: 'progress',
         stage: 'Processing target',
-        percent,
+        percent: 40 + (builder.target_size() / targetFile.size) * 50,
         detail: formatBytes(builder.target_size())
       });
     }
 
-    // Check if files are identical
+    // Check for identical files
     if (builder.are_files_identical()) {
       await writable.close();
       builder.reset();
@@ -109,11 +162,11 @@ async function createPatch(sourceFile: File, targetFile: File, outputName: strin
       return;
     }
 
-    // Finalize target processing
+    // Phase 3: Finalize (90-100%)
     send({ type: 'progress', stage: 'Finalizing', percent: 90 });
     builder.finalize_target();
 
-    // Flush all remaining output
+    // Flush remaining output
     while (builder.has_output()) {
       const patchChunk = builder.flush_output(WRITE_CHUNK_SIZE);
       if (patchChunk.length === 0) break;
@@ -123,31 +176,48 @@ async function createPatch(sourceFile: File, targetFile: File, outputName: strin
     }
 
     await writable.close();
+    builder.reset();
 
     send({ type: 'progress', stage: 'Complete', percent: 100 });
     send({ type: 'complete', outputName, size: totalWritten });
 
-    builder.reset();
   } catch (err) {
-    send({ type: 'error', message: `Create patch failed: ${err}`});
+    send({ type: 'error', message: `Create patch failed: ${err}` });
   }
 }
 
-/// Apply patch operation using OPFS streaming (memory-efficient)
-/// This approach streams source and patch to temp files, then reads from OPFS
-/// for each instruction instead of holding everything in WASM memory.
-async function applyPatch(sourceFile: File, patchFile: File, outputName: string) {
-  const SOURCE_TEMP = '_source.tmp';
-  const PATCH_TEMP = '_patch.tmp';
-  
-  // Instruction type markers (same as Rust)
-  const TYPE_COPY = 0x01;
-  const TYPE_INSERT = 0x02;
-  
+// ============================================================================
+// Patch Application
+// ============================================================================
+
+/** Parsed patch header information. */
+interface PatchHeader {
+  sourceSize: number;
+  sourceHash: string;
+  targetSize: number;
+  headerSize: number;
+}
+
+/**
+ * Applies a binary patch to a source file.
+ * 
+ * Uses OPFS for memory-efficient streaming instead of loading
+ * everything into WASM memory.
+ * 
+ * @param sourceFile - Original file to patch.
+ * @param patchFile - Patch file to apply.
+ * @param outputName - Output filename in OPFS.
+ */
+async function applyPatch(
+  sourceFile: File,
+  patchFile: File,
+  outputName: string
+): Promise<void> {
   try {
-    // Step 1: Stream patch file to OPFS temp (no hash needed for patch)
+    // Phase 1: Stream patch file to OPFS (0-10%)
     send({ type: 'progress', stage: 'Reading patch', percent: 0 });
-    await streamFileToOpfsNoHash(patchFile, PATCH_TEMP, (bytes, total) => {
+    
+    await streamFileToOpfs(patchFile, TEMP_FILES.PATCH, (bytes, total) => {
       send({
         type: 'progress',
         stage: 'Reading patch',
@@ -156,32 +226,30 @@ async function applyPatch(sourceFile: File, patchFile: File, outputName: string)
       });
     });
     
-    // Step 2: Parse patch header ONLY (33 bytes) - not the entire file!
+    // Phase 2: Parse patch header (10%)
     send({ type: 'progress', stage: 'Parsing header', percent: 10 });
-    const patchHandle = await getSyncAccessHandle(PATCH_TEMP);
-    const headerBuffer = new Uint8Array(33);
+    
+    const patchHandle = await getSyncAccessHandle(TEMP_FILES.PATCH);
+    const headerBuffer = new Uint8Array(HEADER_SIZE);
     patchHandle.read(headerBuffer, { at: 0 });
     
-    // Parse header using WASM
-    const headerInfoJson = parse_patch_header_only(headerBuffer);
-    const headerInfo: { sourceSize: number; sourceHash: string; targetSize: number; headerSize: number } = JSON.parse(headerInfoJson);
+    const headerInfo: PatchHeader = JSON.parse(parse_patch_header_only(headerBuffer));
     
-    // Validate source file size early
+    // Validate source file size
     if (sourceFile.size !== headerInfo.sourceSize) {
       patchHandle.close();
       send({
         type: 'error',
-        message: `Source file size mismatch. Expected ${formatBytes(headerInfo.sourceSize)}, got ${formatBytes(sourceFile.size)}`
+        message: `Source size mismatch. Expected ${formatBytes(headerInfo.sourceSize)}, got ${formatBytes(sourceFile.size)}`
       });
       return;
     }
     
-    // Step 3: Stream source file to OPFS temp with WASM hash (memory efficient!)
+    // Phase 3: Stream source to OPFS with hash validation (12-40%)
     send({ type: 'progress', stage: 'Reading source', percent: 12 });
     
-    // Use WASM HashBuilder instead of JS BigInt - much more memory efficient
-    const hashBuilder = new WasmHashBuilder();
-    const sourceWritable = await createOpfsFile(SOURCE_TEMP);
+    const hashBuilder = new StreamingHasher();
+    const sourceWritable = await createOpfsFile(TEMP_FILES.SOURCE);
     const sourceReader = sourceFile.stream().getReader();
     let sourceBytesWritten = 0;
     
@@ -190,10 +258,7 @@ async function applyPatch(sourceFile: File, patchFile: File, outputName: string)
         const { done, value } = await sourceReader.read();
         if (done) break;
         
-        // Update hash using WASM (native u64, no BigInt allocations!)
         hashBuilder.update(value);
-        
-        // Write to OPFS
         await sourceWritable.write(value);
         sourceBytesWritten += value.length;
         
@@ -208,71 +273,62 @@ async function applyPatch(sourceFile: File, patchFile: File, outputName: string)
       await sourceWritable.close();
     }
     
-    // Validate source hash using WASM result
+    // Validate source hash
     send({ type: 'progress', stage: 'Validating source', percent: 40 });
-    const computedHashHex = hashBuilder.finalize();
-    if (computedHashHex !== headerInfo.sourceHash) {
+    
+    const computedHash = hashBuilder.finalize();
+    if (computedHash !== headerInfo.sourceHash) {
       patchHandle.close();
-      hashBuilder.free(); // Free WASM memory
+      hashBuilder.free();
       send({
         type: 'error',
-        message: `Source hash mismatch. Expected ${headerInfo.sourceHash}, got ${computedHashHex}`
+        message: `Source hash mismatch. Expected ${headerInfo.sourceHash}, got ${computedHash}`
       });
       return;
     }
-    hashBuilder.free(); // Free WASM memory
+    hashBuilder.free();
     
-    // Step 4: Apply patch by streaming through instructions
+    // Phase 4: Apply patch instructions (45-95%)
     send({ type: 'progress', stage: 'Applying patch', percent: 45 });
     
-    const sourceHandle = await getSyncAccessHandle(SOURCE_TEMP);
+    const sourceHandle = await getSyncAccessHandle(TEMP_FILES.SOURCE);
     const outputWritable = await createOpfsFile(outputName);
     
     let bytesWritten = 0;
-    let patchOffset = 33; // Start after header
+    let patchOffset = HEADER_SIZE;
     const patchFileSize = patchHandle.getSize();
     
-    // Buffer for reading instruction headers (reused)
+    // Reusable buffers to reduce allocations
     const instrHeaderBuffer = new Uint8Array(13);
-    
-    // Output buffer for batching writes (1MB) - REUSED to reduce allocations
-    const OUTPUT_BUFFER_SIZE = 1024 * 1024;
-    const outputBuffer = new Uint8Array(OUTPUT_BUFFER_SIZE);
+    const outputBuffer = new Uint8Array(WRITE_CHUNK_SIZE);
     let outputBufferPos = 0;
-    
-    // Reusable read buffer for small reads (64KB)
-    const SMALL_READ_SIZE = 64 * 1024;
     const smallReadBuffer = new Uint8Array(SMALL_READ_SIZE);
     
-    // Helper to flush output buffer to OPFS
-    const flushOutputBuffer = async () => {
+    const flushOutputBuffer = async (): Promise<void> => {
       if (outputBufferPos > 0) {
-        // Write subarray directly - no Blob wrapper needed!
         await outputWritable.write(outputBuffer.slice(0, outputBufferPos));
         bytesWritten += outputBufferPos;
         outputBufferPos = 0;
       }
     };
     
-    // Helper to write data to output buffer, flushing when full
-    const writeToOutput = async (data: Uint8Array) => {
+    const writeToOutput = async (data: Uint8Array): Promise<void> => {
       let dataOffset = 0;
       while (dataOffset < data.length) {
-        const spaceInBuffer = OUTPUT_BUFFER_SIZE - outputBufferPos;
+        const spaceInBuffer = WRITE_CHUNK_SIZE - outputBufferPos;
         const bytesToCopy = Math.min(spaceInBuffer, data.length - dataOffset);
         
         outputBuffer.set(data.subarray(dataOffset, dataOffset + bytesToCopy), outputBufferPos);
         outputBufferPos += bytesToCopy;
         dataOffset += bytesToCopy;
         
-        if (outputBufferPos >= OUTPUT_BUFFER_SIZE) {
+        if (outputBufferPos >= WRITE_CHUNK_SIZE) {
           await flushOutputBuffer();
         }
       }
     };
     
     let lastProgressUpdate = Date.now();
-    const PROGRESS_INTERVAL = 100; // Update every 100ms
     
     try {
       while (patchOffset < patchFileSize) {
@@ -282,14 +338,13 @@ async function applyPatch(sourceFile: File, patchFile: File, outputName: string)
         patchOffset += 1;
         
         if (instrType === TYPE_COPY) {
-          // Read COPY instruction: offset(8) + length(4) = 12 bytes
+          // COPY: offset(8) + length(4)
           patchHandle.read(instrHeaderBuffer.subarray(0, 12), { at: patchOffset });
           patchOffset += 12;
           
           const copyOffset = Number(new DataView(instrHeaderBuffer.buffer).getBigUint64(0, true));
           const copyLength = new DataView(instrHeaderBuffer.buffer).getUint32(8, true);
           
-          // Read from source in chunks using reusable buffer
           let remaining = copyLength;
           let srcOffset = copyOffset;
           while (remaining > 0) {
@@ -302,13 +357,12 @@ async function applyPatch(sourceFile: File, patchFile: File, outputName: string)
           }
           
         } else if (instrType === TYPE_INSERT) {
-          // Read INSERT instruction: length(4) = 4 bytes
+          // INSERT: length(4) + data
           patchHandle.read(instrHeaderBuffer.subarray(0, 4), { at: patchOffset });
           patchOffset += 4;
           
           const insertLength = new DataView(instrHeaderBuffer.buffer).getUint32(0, true);
           
-          // Read INSERT data in chunks using reusable buffer
           let remaining = insertLength;
           let insertOffset = patchOffset;
           while (remaining > 0) {
@@ -325,22 +379,20 @@ async function applyPatch(sourceFile: File, patchFile: File, outputName: string)
           throw new Error(`Unknown instruction type: ${instrType}`);
         }
         
-        // Report progress periodically (time-based, not per-instruction)
+        // Throttled progress updates
         const now = Date.now();
-        if (now - lastProgressUpdate >= PROGRESS_INTERVAL) {
+        if (now - lastProgressUpdate >= PROGRESS_INTERVAL_MS) {
           const totalWritten = bytesWritten + outputBufferPos;
-          const percent = 45 + (totalWritten / headerInfo.targetSize) * 50;
           send({
             type: 'progress',
             stage: 'Writing output',
-            percent,
+            percent: 45 + (totalWritten / headerInfo.targetSize) * 50,
             detail: `${formatBytes(totalWritten)} / ${formatBytes(headerInfo.targetSize)}`
           });
           lastProgressUpdate = now;
         }
       }
       
-      // Flush any remaining data
       await flushOutputBuffer();
       
     } finally {
@@ -349,54 +401,70 @@ async function applyPatch(sourceFile: File, patchFile: File, outputName: string)
       await outputWritable.close();
     }
     
-    // Step 5: Cleanup temp files
+    // Phase 5: Cleanup (98-100%)
     send({ type: 'progress', stage: 'Cleaning up', percent: 98 });
-    await safeDeleteOpfsFile(SOURCE_TEMP);
-    await safeDeleteOpfsFile(PATCH_TEMP);
+    await safeDeleteOpfsFile(TEMP_FILES.SOURCE);
+    await safeDeleteOpfsFile(TEMP_FILES.PATCH);
     
     send({ type: 'progress', stage: 'Complete', percent: 100 });
     send({ type: 'complete', outputName, size: headerInfo.targetSize });
     
   } catch (err) {
     // Cleanup on error
-    await safeDeleteOpfsFile(SOURCE_TEMP);
-    await safeDeleteOpfsFile(PATCH_TEMP);
+    await safeDeleteOpfsFile(TEMP_FILES.SOURCE);
+    await safeDeleteOpfsFile(TEMP_FILES.PATCH);
     send({ type: 'error', message: `Apply patch failed: ${err}` });
   }
 }
 
-/// Hash file operation
-async function hashFile(file: File) {
+// ============================================================================
+// File Hashing
+// ============================================================================
+
+/**
+ * Computes the hash of a file.
+ * 
+ * @param file - File to hash.
+ */
+async function hashFile(file: File): Promise<void> {
   try {
     const data = new Uint8Array(await file.arrayBuffer());
     const hash = hash_data(data);
     send({ type: 'hash', hash });
   } catch (err) {
-    send({ type: 'error', message: `Hash failed: ${err}`});
+    send({ type: 'error', message: `Hash failed: ${err}` });
   }
 }
 
-/// Handle messages from main thread
-self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
+// ============================================================================
+// Message Handler
+// ============================================================================
+
+/** Handles messages from the main thread. */
+self.onmessage = async (event: MessageEvent<WorkerMessage>): Promise<void> => {
   const msg = event.data;
 
   switch (msg.type) {
     case 'init':
       await initWasm();
       break;
+      
     case 'createPatch':
       await createPatch(msg.sourceFile, msg.targetFile, msg.outputName);
       break;
+      
     case 'applyPatch':
       await applyPatch(msg.sourceFile, msg.patchFile, msg.outputName);
       break;
+      
     case 'getVersion':
       if (!wasmInitialized) await initWasm();
       send({ type: 'version', version: version() });
       break;
+      
     case 'hashFile':
       if (!wasmInitialized) await initWasm();
       await hashFile(msg.file);
       break;
   }
-}
+};

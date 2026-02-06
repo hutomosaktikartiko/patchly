@@ -1,27 +1,35 @@
-//! Rolling hash implementation for chunk fingerprinting.
+//! Rolling hash implementation for content-defined chunking.
 //!
-//! Uses Adler-32 style algorithm with two sums:
-//! - `sum_a`: Sum of all bytes in window
+//! Uses an Adler-32 style algorithm with two sums:
+//! - `sum_a`: Sum of all bytes in the window
 //! - `sum_b`: Weighted sum (positional)
 //!
-//! This allows O(1) "rolling" when sliding the window by 1 byte.
+//! This allows O(1) "rolling" when sliding the window by one byte.
 
 /// Modulus for hash calculation to prevent overflow.
-/// Using prime close to 2^16 for better distribution.
+/// Using a prime close to 2^16 for better distribution.
 const MODULUS: u32 = 65521;
 
+/// Rolling hash calculator for efficient window-based hashing.
+///
+/// Supports O(1) hash updates when sliding a window through data,
+/// making it ideal for delta encoding and deduplication.
 #[derive(Debug, Clone)]
 pub struct RollingHash {
+    /// Sum of all bytes in the current window.
     sum_a: u32,
+    /// Weighted positional sum.
     sum_b: u32,
+    /// Size of the sliding window in bytes.
     window_size: usize,
 }
 
 impl RollingHash {
-    /// Create a new RollingHash with specified window size.
+    /// Creates a new `RollingHash` with the specified window size.
     ///
     /// # Arguments
-    /// * `window_size` - Number of bytes in the sliding window (chunk size)
+    ///
+    /// * `window_size` - Number of bytes in the sliding window (chunk size).
     pub fn new(window_size: usize) -> Self {
         Self {
             sum_a: 0,
@@ -30,14 +38,17 @@ impl RollingHash {
         }
     }
 
-    /// Calculate hash from a full chunk of data.
-    /// Use this for initial hash or when you have complete chunk.
+    /// Calculates hash from a complete chunk of data.
+    ///
+    /// Use this for initial hash calculation or when you have a complete chunk.
     ///
     /// # Arguments
-    /// * `data` - Byte slice, should be exactly `window_size` bytes
+    ///
+    /// * `data` - Byte slice, should be exactly `window_size` bytes.
     ///
     /// # Returns
-    /// * `u32` - Computed hash value
+    ///
+    /// The computed 32-bit hash value.
     pub fn hash_chunk(&mut self, data: &[u8]) -> u32 {
         self.sum_a = 0;
         self.sum_b = 0;
@@ -51,44 +62,44 @@ impl RollingHash {
         self.digest()
     }
 
-    /// Roll the hash forward by removing `old_byte` and adding `new_byte`.
-    /// This is O(1) operation - the core efficiency of rolling hash.
+    /// Rolls the hash forward by one byte.
+    ///
+    /// This is an O(1) operation - the core efficiency of rolling hash.
     ///
     /// # Arguments
-    /// * `old_byte`: Byte leading the window (leftmost)
-    /// * `new_byte`: Byte entering the window (rightmost)
+    ///
+    /// * `old_byte` - Byte leaving the window (leftmost).
+    /// * `new_byte` - Byte entering the window (rightmost).
     ///
     /// # Returns
-    /// * `u32` - Updated hash value
+    ///
+    /// The updated 32-bit hash value.
     pub fn roll(&mut self, old_byte: u8, new_byte: u8) -> u32 {
         let old = old_byte as u32;
         let new = new_byte as u32;
 
-        // Remove old_byte contribution, add new_byte
-        // sum_a = sum_a - old + new
+        // Update sum_a: remove old, add new
         self.sum_a = (self.sum_a + MODULUS - (old % MODULUS) + new) % MODULUS;
 
-        // sum_b loses: window_size * old (old had highest weight)
-        // sum_b gains: sum_a (new byte position 1, but we also shifted all weights)
-        // Simplifier: sum_b = sum_b - window_size * old + sum_a
+        // Update sum_b: old had highest weight, new gets sum_a contribution
         let ws = self.window_size as u32;
         self.sum_b = (self.sum_b + MODULUS - ((ws * old) % MODULUS) + self.sum_a) % MODULUS;
 
         self.digest()
     }
 
-    /// Combine sum_a and sum_b into final hash value.
+    /// Combines sum_a and sum_b into the final hash value.
     #[inline]
     pub fn digest(&self) -> u32 {
         (self.sum_b << 16) | self.sum_a
     }
 
-    /// Get current sum_a
+    /// Returns the current sum_a value.
     pub fn sum_a(&self) -> u32 {
         self.sum_a
     }
 
-    /// Get current sum_b
+    /// Returns the current sum_b value.
     pub fn sum_b(&self) -> u32 {
         self.sum_b
     }
@@ -103,22 +114,22 @@ mod tests {
         let mut rh = RollingHash::new(4);
         let hash = rh.hash_chunk(b"abcd");
 
-        // Hash should be non-sero
+        // Hash should be non-zero
         assert_ne!(hash, 0);
 
-        // Same input should produced same hash
+        // Same input should produce same hash
         let mut rh2 = RollingHash::new(4);
         let hash2 = rh2.hash_chunk(b"abcd");
         assert_eq!(hash, hash2);
     }
 
     #[test]
-    pub fn test_different_data_different_hash() {
+    fn test_different_data_different_hash() {
         let mut rh = RollingHash::new(4);
         let hash1 = rh.hash_chunk(b"abcd");
-        let has2 = rh.hash_chunk(b"abce");
+        let hash2 = rh.hash_chunk(b"abce");
 
-        assert_ne!(hash1, has2);
+        assert_ne!(hash1, hash2);
     }
 
     #[test]
