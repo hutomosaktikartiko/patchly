@@ -307,7 +307,7 @@ Speed: ~8 seconds for 1.8GB data
 
 ### Build & Deploy
 
-- [ ] Deploy to Cloudflare Pages
+- [x] Deploy to Cloudflare Pages
 
 ---
 
