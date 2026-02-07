@@ -1,15 +1,29 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { PatchlyWorker, downloadFromOpfs } from "./workers";
-import { formatBytes } from "./utils/bytes";
+import { formatSize } from "./utils/bytes";
+import { Background } from "./components/Background";
+import { Header, type Mode } from "./components/Header";
+import { FileUpload } from "./components/FileUpload";
+import {
+  IconFilePlus,
+  IconFileUp,
+  IconSwap,
+  IconZap,
+} from "./components/Icons";
+import { IdleAction } from "./components/IdleAction";
+import { ProcessingAction } from "./components/ProcessingAction";
+import { SuccessAction } from "./components/SuccessAction";
+import { ErrorAction } from "./components/ErrorAction";
+import { CreatedSuccess } from "./components/CreatedSuccess";
+import { AppliedSuccess } from "./components/AppliedSuccess";
+import { Footer } from "./components/Footer";
 
-type Mode = "create" | "apply";
 type Status = "idle" | "processing" | "success" | "error";
 
 function App() {
   const [mode, setMode] = useState<Mode>("create");
   const [status, setStatus] = useState<Status>("idle");
   const [progress, setProgress] = useState(0);
-  const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Files
@@ -26,7 +40,7 @@ function App() {
 
   // Add log helper
   const addLog = useCallback((msg: string) => {
-    setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+    console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
   }, []);
 
   // Initial worker
@@ -45,7 +59,7 @@ function App() {
         setOutputName(name);
         setOutputSize(size);
         setProgress(100);
-        addLog(`Done! Output: ${name} (${formatBytes(size)})`);
+        addLog(`Done! Output: ${name} (${formatSize(size)})`);
       },
       // on error
       (message) => {
@@ -58,7 +72,7 @@ function App() {
         setStatus("error");
         setError("Source and target file are identical. No patch needed");
         addLog("Files are identical - no patch created");
-      }
+      },
     );
 
     worker.waitReady().then(() => {
@@ -71,7 +85,7 @@ function App() {
   }, [addLog]);
 
   const handleStart = () => {
-    if (mode === "create"){
+    if (mode === "create") {
       if (!sourceFile || !targetFile) {
         setError("Please select both source and target files");
         return;
@@ -79,10 +93,13 @@ function App() {
 
       setStatus("processing");
       setProgress(0);
-      setLogs([]);
       setError(null);
       addLog(`Creating patch: ${sourceFile.name} -> ${targetFile.name}`);
-      workerRef.current?.createPatch(sourceFile, targetFile, `${targetFile.name}.patch`);
+      workerRef.current?.createPatch(
+        sourceFile,
+        targetFile,
+        `${targetFile.name}.patch`,
+      );
     } else {
       if (!sourceFile || !patchFile) {
         setError("Please select both source and patch files");
@@ -91,188 +108,104 @@ function App() {
 
       setStatus("processing");
       setProgress(0);
-      setLogs([]);
       setError(null);
       addLog(`Applying patch to: ${sourceFile.name}`);
       const outName = patchFile.name.replace(/\.patch$/, "") || "output";
       workerRef.current?.applyPatch(sourceFile, patchFile, outName);
     }
-  }
+  };
 
   const handleDownload = async () => {
     if (!outputName) return;
 
     await downloadFromOpfs(outputName);
     addLog(`Downloaded: ${outputName}`);
-  }
+  };
 
   const handleReset = () => {
     setStatus("idle");
     setProgress(0);
-    setLogs([]);
     setError(null);
     setOutputName(null);
-  }
+    setOutputSize(0);
+    setSourceFile(null);
+    setTargetFile(null);
+    setPatchFile(null);
+  };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-8">
-       <div className="max-w-2xl mx-auto">
+    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-indigo-500/30 overflow-x-hidden">
+      {/* Decorative Background */}
+      <Background />
+      <main className="relative z-10 max-w-4xl mx-auto px-4 md:px-6 py-8 md:py-12">
         {/* Header */}
-        <h1 className="text-3xl font-bold mb-2">Patchly</h1>
-        <p className="text-gray-400 mb-8">Client-side binary diff & patch tool</p>
+        <Header mode={mode} setMode={setMode} />
 
-        {/* Mode Selector */}
-        <div className="flex gap-2 mb-6">
-          <button
-            onClick={() => setMode("create")}
-            className={`px-4 py-2 rounded ${
-              mode === "create" ? "bg-blue-600" : "bg-gray-700"
-            }`}
-          >
-            Create Patch
-          </button>
-          <button
-            onClick={() => setMode("apply")}
-            className={`px-4 py-2 rounded ${
-              mode === "apply" ? "bg-blue-600" : "bg-gray-700"
-            }`}
-          >
-            Apply Patch
-          </button>
-        </div>
-
-        {/* File Inputs */}
-        <div className="space-y-4 mb-6">
-          {/* Source File (both modes) */}
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">
-              Source File {mode === "create" ? "(old version)" : "(original)"}
-            </label>
-            <input
-              type="file"
-              onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
-              className="w-full bg-gray-800 rounded p-2"
-              disabled={status === "processing"}
+        {/* Main Workspace */}
+        <div
+          key={mode}
+          className="animate-in fade-in slide-in-from-bottom-4 duration-500"
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-8">
+            {/* Source File */}
+            <FileUpload
+              title="Base File"
+              icon={<IconFileUp />}
+              label="Select base file"
+              file={sourceFile}
+              onChange={setSourceFile}
             />
-            {sourceFile && (
-              <p className="text-sm text-gray-500 mt-1">
-                {sourceFile.name} ({formatBytes(sourceFile.size)})
-              </p>
+
+            {/* Source or Patch File */}
+            <FileUpload
+              title={mode === "create" ? "Target File" : "Patch File"}
+              icon={mode === "create" ? <IconFilePlus /> : <IconZap />}
+              label={
+                mode === "create" ? "Select target file" : "Select .patch file"
+              }
+              file={mode === "create" ? targetFile : patchFile}
+              onChange={mode === "create" ? setTargetFile : setPatchFile}
+            />
+          </div>
+
+          {/* Action Hub */}
+          <div className="min-h-[280px] md:min-h-[320px] bg-slate-900/80 border border-slate-800/50 rounded-3xl p-6 md:p-8 backdrop-blur-xl shadow-2xl flex items-center justify-center relative overflow-hidden transition-all duration-500">
+            {status === "idle" && (
+              <IdleAction
+                disabled={
+                  !sourceFile || (mode === "create" ? !targetFile : !patchFile)
+                }
+                label={mode === "create" ? "Generate Patch" : "Apply Patch"}
+                icon={mode == "create" ? <IconSwap /> : <IconZap />}
+                onClick={handleStart}
+              />
+            )}
+
+            {status === "processing" && (
+              <ProcessingAction progress={progress} />
+            )}
+
+            {status === "success" && (
+              <SuccessAction onDownload={handleDownload} onReset={handleReset}>
+                {mode === "create" ? (
+                  <CreatedSuccess target={targetFile} outputSize={outputSize} />
+                ) : (
+                  <AppliedSuccess source={sourceFile} outputSize={outputSize} />
+                )}
+              </SuccessAction>
+            )}
+
+            {status === "error" && (
+              <ErrorAction message={error} onReset={handleReset} />
             )}
           </div>
 
-          {/* Target or Patch File */}
-          {mode === "create" ? (
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">
-                Target File (new version)
-              </label>
-              <input
-                type="file"
-                onChange={(e) => setTargetFile(e.target.files?.[0] || null)}
-                className="w-full bg-gray-800 rounded p-2"
-                disabled={status === "processing"}
-              />
-              {targetFile && (
-                <p className="text-sm text-gray-500 mt-1">
-                  {targetFile.name} ({formatBytes(targetFile.size)})
-                </p>
-              )}
-            </div>
-          ) : (
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">
-                Patch File (.patch)
-              </label>
-              <input
-                type="file"
-                accept=".patch"
-                onChange={(e) => setPatchFile(e.target.files?.[0] || null)}
-                className="w-full bg-gray-800 rounded p-2"
-                disabled={status === "processing"}
-              />
-              {patchFile && (
-                <p className="text-sm text-gray-500 mt-1">
-                  {patchFile.name} ({formatBytes(patchFile.size)})
-                </p>
-              )}
-            </div>
-          )}
+          {/* Footer */}
+          <Footer />
         </div>
-
-        {/* Action Button */}
-        <button
-          onClick={handleStart}
-          disabled={status === "processing"}
-          className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 py-3 rounded font-semibold mb-6"
-        >
-          {status === "processing"
-            ? "Processing..."
-            : mode === "create"
-            ? "Create Patch"
-            : "Apply Patch"}
-        </button>
-
-        {/* Error Message */}
-        {error && (
-          <div className="bg-red-900/50 border border-red-500 text-red-200 p-3 rounded mb-4">
-            {error}
-          </div>
-        )}
-
-        {/* Progress Bar */}
-        {status === "processing" && (
-          <div className="mb-6">
-            <div className="flex justify-between text-sm mb-1">
-              <span>Progress</span>
-              <span>{progress.toFixed(1)}%</span>
-            </div>
-            <div className="h-3 bg-gray-700 rounded overflow-hidden">
-              <div
-                className="h-full bg-blue-500 transition-all"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Success Result */}
-        {status === "success" && outputName && (
-          <div className="bg-green-900/50 border border-green-500 p-4 rounded mb-6">
-            <p className="mb-2">
-              Output: <strong>{outputName}</strong> ({formatBytes(outputSize)})
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={handleDownload}
-                className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded"
-              >
-                Download
-              </button>
-              <button
-                onClick={handleReset}
-                className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded"
-              >
-                New Operation
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Logs */}
-        {logs.length > 0 && (
-          <div className="bg-gray-800 rounded p-4">
-            <h3 className="text-sm font-semibold mb-2">Log</h3>
-            <div className="text-xs font-mono text-gray-400 space-y-1 max-h-48 overflow-y-auto">
-              {logs.map((log, i) => (
-                <div key={i}>{log}</div>
-              ))}
-            </div>
-          </div>
-        )}
-       </div>
+      </main>
     </div>
-  )
+  );
 }
 
-export default App
+export default App;
