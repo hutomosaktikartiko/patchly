@@ -59,11 +59,14 @@ impl StreamingDiff {
         let mut current_hash = hasher.hash_chunk(&self.buffer[0..self.block_size]);
 
         while pos + self.block_size <= self.buffer.len() {
-            // Look up current hash in index
-            let matched_offset = self.index.lookup(current_hash).first().copied();
+            // Get the current block for verification
+            let current_block = &self.buffer[pos..pos + self.block_size];
+
+            // Look up current hash in index with strong hash verification
+            let matched_offset = self.index.find_verified_match(current_hash, current_block);
 
             if let Some(source_offset) = matched_offset {
-                // Found a match - flush pending INSERT data first
+                // Found a verified match - flush pending INSERT data first
                 self.flush_insert_buffer();
 
                 // Emit COPY instruction

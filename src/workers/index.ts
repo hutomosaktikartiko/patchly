@@ -101,17 +101,57 @@ export class PatchlyWorker {
   }
 }
 
-/// OPFS utilities for main thread
+/** Common MIME types by extension. */
+const MIME_TYPES: Record<string, string> = {
+  // Video
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.mov': 'video/quicktime',
+  // Audio
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac',
+  // Images
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  // Documents
+  '.pdf': 'application/pdf',
+  '.zip': 'application/zip',
+  '.json': 'application/json',
+  // Default
+  '.patch': 'application/octet-stream',
+};
+
+/** Gets MIME type from filename extension. */
+function getMimeType(filename: string): string {
+  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+  return MIME_TYPES[ext] || 'application/octet-stream';
+}
+
+/** Downloads a file from OPFS with correct MIME type. */
 export async function downloadFromOpfs(fileName: string): Promise<void> {
   const file = await getOpfsFile(fileName);
-
-  // Create download link
-  const url = URL.createObjectURL(file);
+  
+  // Get MIME type from extension (OPFS files have empty type)
+  const mimeType = getMimeType(fileName);
+  
+  // Use File.slice() to create new File with correct type (avoids loading entire file into memory)
+  const typedFile = file.slice(0, file.size, mimeType);
+  
+  const url = URL.createObjectURL(typedFile);
   const a = document.createElement("a");
   a.href = url;
   a.download = fileName;
   a.click();
-  URL.revokeObjectURL(url);
+  
+  // Delay revoke to ensure download starts
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export async function listOpfsFiles(): Promise<string[]> {

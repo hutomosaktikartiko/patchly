@@ -349,9 +349,11 @@ async function applyPatch(
           let srcOffset = copyOffset;
           while (remaining > 0) {
             const chunkSize = Math.min(remaining, SMALL_READ_SIZE);
-            const chunk = smallReadBuffer.subarray(0, chunkSize);
-            sourceHandle.read(chunk, { at: srcOffset });
-            await writeToOutput(chunk);
+            // Read into reusable buffer
+            sourceHandle.read(smallReadBuffer.subarray(0, chunkSize), { at: srcOffset });
+            // IMPORTANT: Use slice() to copy data, not subarray() which is just a view
+            // Otherwise the buffer may be overwritten before writeToOutput finishes
+            await writeToOutput(smallReadBuffer.slice(0, chunkSize));
             remaining -= chunkSize;
             srcOffset += chunkSize;
           }
@@ -367,9 +369,10 @@ async function applyPatch(
           let insertOffset = patchOffset;
           while (remaining > 0) {
             const chunkSize = Math.min(remaining, SMALL_READ_SIZE);
-            const chunk = smallReadBuffer.subarray(0, chunkSize);
-            patchHandle.read(chunk, { at: insertOffset });
-            await writeToOutput(chunk);
+            // Read into reusable buffer
+            patchHandle.read(smallReadBuffer.subarray(0, chunkSize), { at: insertOffset });
+            // IMPORTANT: Use slice() to copy data, not subarray() which is just a view
+            await writeToOutput(smallReadBuffer.slice(0, chunkSize));
             remaining -= chunkSize;
             insertOffset += chunkSize;
           }
@@ -394,7 +397,6 @@ async function applyPatch(
       }
       
       await flushOutputBuffer();
-      
     } finally {
       sourceHandle.close();
       patchHandle.close();

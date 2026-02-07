@@ -55,7 +55,7 @@ patchly/
 │       ├─ diff/
 │       │   ├─ mod.rs
 │       │   ├─ rolling_hash.rs    # O(1) rolling hash for chunk matching
-│       │   ├─ block_index.rs     # Memory-efficient hash→offset index
+│       │   ├─ block_index.rs     # Two-level hash index (weak + strong)
 │       │   └─ streaming_diff.rs  # Streaming diff generator
 │       │
 │       ├─ format/
@@ -89,8 +89,9 @@ patchly/
 
 - **Rust** – Core diff/patch engine
 - **WebAssembly** – Browser runtime
-- **Rolling Hash** – O(1) chunk matching (Adler-32 variant)
-- **FNV-1a Hash** – File verification (64-bit)
+- **Rolling Hash** – O(1) chunk matching (Adler-32 variant, 32-bit)
+- **FNV-1a Hash** – File verification + collision prevention (64-bit)
+- **Two-level Matching** – Weak hash lookup + strong hash verification
 - **Binary Delta Encoding** – COPY/INSERT instruction format
 
 ### Frontend
@@ -135,9 +136,10 @@ User selects source file (old version) + target file (new version)
         Source file streamed in chunks (64KB)
                               ↓
         ┌─────────────────────────────────────────┐
-        │        BlockIndex (Hash Table)          │
-        │   Rolling hash → offset mapping         │
-        │   ~5-10% of source size in memory       │
+        │        BlockIndex (Two-level Hash)       │
+        │   Weak hash (32-bit) → fast lookup       │
+        │   Strong hash (64-bit) → collision check │
+        │   ~8-10% of source size in memory        │
         └─────────────────────────────────────────┘
                               ↓
         Target file streamed in chunks (64KB)
@@ -249,6 +251,8 @@ Speed: ~8 seconds for 1.8GB data
 - [x] Chunk-based file reading (4KB chunks)
 - [x] Rolling hash implementation (Adler-32 variant)
 - [x] Binary block matching via BlockIndex
+- [x] Two-level hash matching (weak + strong)
+- [x] Hash collision prevention
 - [x] COPY/INSERT instruction generation
 - [x] Deterministic patch output
 - [x] Streaming architecture (no full file in memory)
@@ -288,6 +292,7 @@ Speed: ~8 seconds for 1.8GB data
 - [x] Patch header magic validation
 - [x] Mismatch detection (wrong base file)
 - [x] Corrupted patch detection
+- [x] Hash collision prevention (weak + strong hash)
 - [x] OPFS temp file cleanup on error
 
 ### UI/UX
