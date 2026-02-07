@@ -3,35 +3,6 @@ interface IconProps {
   className?: string;
 }
 
-const IconCpu = ({ size = 24, className = "" }: IconProps) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    className={className}
-  >
-    <rect
-      x="5"
-      y="5"
-      width="14"
-      height="14"
-      rx="2"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      opacity="0.2"
-    />
-    <path d="M9 9h6v6H9V9z" fill="currentColor" />
-    <path
-      d="M9 1v4M15 1v4M9 19v4M15 19v4M23 9h-4M23 15h-4M5 9H1M5 15H1"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-    />
-  </svg>
-);
-
 const IconShield = ({ size = 24, className = "" }: IconProps) => (
   <svg
     width={size}
@@ -335,7 +306,6 @@ const IconInfo = ({ size = 24, className = "" }) => (
 );
 
 export {
-  IconCpu,
   IconShield,
   IconGithub,
   IconFileUp,

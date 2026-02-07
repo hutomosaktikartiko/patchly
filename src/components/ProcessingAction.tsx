@@ -1,10 +1,11 @@
-import { IconRefresh } from "./Icons";
+import { IconAlert, IconRefresh } from "./Icons";
 
 interface ProcessingActionProps {
   progress: number;
+  stage?: string;
 }
 
-function ProcessingAction({ progress }: ProcessingActionProps) {
+function ProcessingAction({ progress, stage }: ProcessingActionProps) {
   return (
     <div
       key="processing"
@@ -15,7 +16,7 @@ function ProcessingAction({ progress }: ProcessingActionProps) {
           <div className="flex items-center gap-2 md:gap-3 animate-in fade-in duration-700 delay-150 fill-mode-both">
             <IconRefresh className="w-4 h-4 md:w-5 md:h-5 text-indigo-400 animate-spin" />
             <span className="text-xs md:text-sm font-black uppercase tracking-tight text-white">
-              Processing Binary...
+              {stage || "Processing..."}
             </span>
           </div>
           <span className="text-lg md:text-xl font-black font-mono text-indigo-400 animate-in fade-in zoom-in-90 duration-500 delay-200 fill-mode-both">
@@ -41,8 +42,9 @@ function ProcessingAction({ progress }: ProcessingActionProps) {
           />
         </div>
       </div>
-      <p className="text-[8px] md:text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em] animate-pulse text-center">
-        Do not close the browser while processing
+      <p className="text-[8px] md:text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em] flex items-center gap-2">
+        <IconAlert size={12} className="text-amber-500" />
+        Do not close the browser
       </p>
     </div>
   );

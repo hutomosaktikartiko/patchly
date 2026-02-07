@@ -17,7 +17,7 @@ function TabSwitcher({ mode, setMode }: TabSwitcherProps) {
       />
       <button
         onClick={() => setMode("create")}
-        className={`relative z-10 flex-1 px-4 md:px-6 py-2 rounded-lg text-xs md:text-sm font-semibold transition-colors duration-300 ${
+        className={`relative z-10 flex-1 px-4 md:px-6 py-2 rounded-lg text-xs md:text-sm font-semibold transition-colors duration-300 whitespace-nowrap ${
           mode === "create"
             ? "text-white"
             : "text-slate-400 hover:text-slate-200"
@@ -27,7 +27,7 @@ function TabSwitcher({ mode, setMode }: TabSwitcherProps) {
       </button>
       <button
         onClick={() => setMode("apply")}
-        className={`relative z-10 flex-1 px-4 md:px-6 py-2 rounded-lg text-xs md:text-sm font-semibold transition-colors duration-300 ${
+        className={`relative z-10 flex-1 px-4 md:px-6 py-2 rounded-lg text-xs md:text-sm font-semibold transition-colors duration-300 whitespace-nowrap ${
           mode === "apply"
             ? "text-white"
             : "text-slate-400 hover:text-slate-200"

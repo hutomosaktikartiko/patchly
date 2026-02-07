@@ -1,5 +1,8 @@
-import { getOpfsFile, getOpfsRoot } from "../utils/opfs";
-import type { CompleteCallback, ProgressCallback, ErrorCallback } from "./types";
+import type {
+  CompleteCallback,
+  ProgressCallback,
+  ErrorCallback,
+} from "./types";
 
 export class PatchlyWorker {
   private worker: Worker;
@@ -11,10 +14,9 @@ export class PatchlyWorker {
   private readyResolve?: () => void;
 
   constructor() {
-    this.worker = new Worker(
-      new URL('./patchly.worker.ts', import.meta.url),
-      { type: "module" }
-    );
+    this.worker = new Worker(new URL("./patchly.worker.ts", import.meta.url), {
+      type: "module",
+    });
 
     this.readyPromise = new Promise((resolve) => {
       this.readyResolve = resolve;
@@ -22,38 +24,38 @@ export class PatchlyWorker {
 
     this.worker.onmessage = this.handleMessage.bind(this);
     this.worker.onerror = (err) => {
-      console.error('Worker error:', err);
+      console.error("Worker error:", err);
       this.onError?.(`Worker error: ${err.message}`);
     };
 
     // Initialize WASM
-    this.worker.postMessage({ type: 'init' });
+    this.worker.postMessage({ type: "init" });
   }
 
   private handleMessage(event: MessageEvent) {
     const msg = event.data;
 
     switch (msg.type) {
-      case 'ready':
+      case "ready":
         this.readyResolve?.();
         break;
-      case 'progress':
+      case "progress":
         this.onProgress?.(msg.stage, msg.percent, msg.detail);
         break;
-      case 'complete':
+      case "complete":
         this.onComplete?.(msg.outputName, msg.size);
         break;
-      case 'error':
+      case "error":
         this.onError?.(msg.message);
         break;
-      case 'identical':
+      case "identical":
         this.onIdentical?.();
         break;
-      case 'version':
-        console.log('Pathly WASM version:', msg.version);
+      case "version":
+        console.log("Pathly WASM version:", msg.version);
         break;
-      case 'hash':
-        console.log('File hash:', msg.hash);
+      case "hash":
+        console.log("File hash:", msg.hash);
         break;
     }
   }
@@ -76,7 +78,7 @@ export class PatchlyWorker {
 
   createPatch(sourceFile: File, targetFile: File, outputName: string) {
     this.worker.postMessage({
-      type: 'createPatch',
+      type: "createPatch",
       sourceFile,
       targetFile,
       outputName,
@@ -85,82 +87,18 @@ export class PatchlyWorker {
 
   applyPatch(sourceFile: File, patchFile: File, outputName: string) {
     this.worker.postMessage({
-      type: 'applyPatch',
+      type: "applyPatch",
       sourceFile,
       patchFile,
-      outputName
+      outputName,
     });
   }
 
   getVersion() {
-    this.worker.postMessage({ type: 'getVersion' });
+    this.worker.postMessage({ type: "getVersion" });
   }
 
   terminate() {
     this.worker.terminate();
   }
-}
-
-/** Common MIME types by extension. */
-const MIME_TYPES: Record<string, string> = {
-  // Video
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.mkv': 'video/x-matroska',
-  '.avi': 'video/x-msvideo',
-  '.mov': 'video/quicktime',
-  // Audio
-  '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
-  '.ogg': 'audio/ogg',
-  '.flac': 'audio/flac',
-  // Images
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  // Documents
-  '.pdf': 'application/pdf',
-  '.zip': 'application/zip',
-  '.json': 'application/json',
-  // Default
-  '.patch': 'application/octet-stream',
-};
-
-/** Gets MIME type from filename extension. */
-function getMimeType(filename: string): string {
-  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
-  return MIME_TYPES[ext] || 'application/octet-stream';
-}
-
-/** Downloads a file from OPFS with correct MIME type. */
-export async function downloadFromOpfs(fileName: string): Promise<void> {
-  const file = await getOpfsFile(fileName);
-  
-  // Get MIME type from extension (OPFS files have empty type)
-  const mimeType = getMimeType(fileName);
-  
-  // Use File.slice() to create new File with correct type (avoids loading entire file into memory)
-  const typedFile = file.slice(0, file.size, mimeType);
-  
-  const url = URL.createObjectURL(typedFile);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  a.click();
-  
-  // Delay revoke to ensure download starts
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-export async function listOpfsFiles(): Promise<string[]> {
-  const root = await getOpfsRoot();
-  const files: string[] = [];
-
-  for await (const [name] of root.entries()) {
-    files.push(name);
-  }
-
-  return files;
 }

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { PatchlyWorker, downloadFromOpfs } from "./workers";
+import { PatchlyWorker } from "./workers";
 import { formatSize } from "./utils/bytes";
 import { Background } from "./components/Background";
 import { Header, type Mode } from "./components/Header";
@@ -17,6 +17,11 @@ import { ErrorAction } from "./components/ErrorAction";
 import { CreatedSuccess } from "./components/CreatedSuccess";
 import { AppliedSuccess } from "./components/AppliedSuccess";
 import { Footer } from "./components/Footer";
+import {
+  downloadFromOpfs,
+  safeDeleteOpfsFile,
+  clearAllOpfsFiles,
+} from "./utils/opfs";
 
 type Status = "idle" | "processing" | "success" | "error";
 
@@ -24,6 +29,7 @@ function App() {
   const [mode, setMode] = useState<Mode>("create");
   const [status, setStatus] = useState<Status>("idle");
   const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
   // Files
@@ -38,12 +44,51 @@ function App() {
   // Worker ref
   const workerRef = useRef<PatchlyWorker | null>(null);
 
+  // Mode change handler with partial reset
+  const handleModeChange = useCallback(
+    async (newMode: Mode) => {
+      if (newMode === mode) return;
+
+      // Clean up OPFS output if exists
+      if (outputName) {
+        await safeDeleteOpfsFile(outputName);
+      }
+
+      // Partial reset: keep sourceFile, clear mode-specific files
+      if (newMode === "create") {
+        setPatchFile(null);
+      } else {
+        setTargetFile(null);
+      }
+
+      // Reset status
+      setStatus("idle");
+      setProgress(0);
+      setStage("");
+      setError(null);
+      setOutputName(null);
+      setOutputSize(0);
+
+      setMode(newMode);
+    },
+    [mode, outputName],
+  );
+
   // Add log helper
   const addLog = useCallback((msg: string) => {
     console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
   }, []);
 
-  // Initial worker
+  // Clean up OPFS on mount (remove leftover files from previous sessions)
+  useEffect(() => {
+    clearAllOpfsFiles().then((count) => {
+      if (count > 0) {
+        addLog(`Cleaned up ${count} leftover file(s) from OPFS`);
+      }
+    });
+  }, [addLog]);
+
+  // Initialize worker
   useEffect(() => {
     const worker = new PatchlyWorker();
 
@@ -51,6 +96,7 @@ function App() {
       // on progress
       (stage, percent, detail) => {
         setProgress(percent);
+        setStage(stage);
         addLog(`${stage}: ${percent.toFixed(1)}% ${detail || ""}`);
       },
       // on complete
@@ -122,9 +168,17 @@ function App() {
     addLog(`Downloaded: ${outputName}`);
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
+    // Clean up OPFS output file if exists
+    if (outputName) {
+      await safeDeleteOpfsFile(outputName);
+      addLog(`Cleaned up: ${outputName}`);
+    }
+
+    // Reset all state
     setStatus("idle");
     setProgress(0);
+    setStage("");
     setError(null);
     setOutputName(null);
     setOutputSize(0);
@@ -137,9 +191,10 @@ function App() {
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-indigo-500/30 overflow-x-hidden">
       {/* Decorative Background */}
       <Background />
+
       <main className="relative z-10 max-w-4xl mx-auto px-4 md:px-6 py-8 md:py-12">
         {/* Header */}
-        <Header mode={mode} setMode={setMode} />
+        <Header mode={mode} setMode={handleModeChange} />
 
         {/* Main Workspace */}
         <div
@@ -149,9 +204,13 @@ function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-8">
             {/* Source File */}
             <FileUpload
-              title="Base File"
+              title={mode === "create" ? "Original File" : "Source File"}
               icon={<IconFileUp />}
-              label="Select base file"
+              label={
+                mode === "create"
+                  ? "Select original file"
+                  : "Select source file"
+              }
               file={sourceFile}
               onChange={setSourceFile}
             />
@@ -164,6 +223,7 @@ function App() {
                 mode === "create" ? "Select target file" : "Select .patch file"
               }
               file={mode === "create" ? targetFile : patchFile}
+              accept={mode === "create" ? "" : ".patch"}
               onChange={mode === "create" ? setTargetFile : setPatchFile}
             />
           </div>
@@ -182,7 +242,7 @@ function App() {
             )}
 
             {status === "processing" && (
-              <ProcessingAction progress={progress} />
+              <ProcessingAction progress={progress} stage={stage} />
             )}
 
             {status === "success" && (

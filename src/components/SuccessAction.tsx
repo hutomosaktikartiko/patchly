@@ -42,7 +42,7 @@ function SuccessAction({ children, onDownload, onReset }: SuccessActionProps) {
             onClick={onReset}
             className="w-full px-6 md:px-8 py-3 md:py-4 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-2xl font-bold text-[10px] md:text-xs transition-all border border-slate-700/50"
           >
-            Repeat Process
+            Start New
           </button>
         </div>
       </div>

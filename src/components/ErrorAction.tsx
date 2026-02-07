@@ -21,7 +21,7 @@ function ErrorAction({ message, onReset }: ErrorActionProps) {
         onClick={onReset}
         className="px-6 md:px-8 py-3 bg-red-500/10 text-red-400 rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-widest hover:bg-red-500/20 transition-all border border-red-500/20"
       >
-        Back
+        Try Again
       </button>
     </div>
   );

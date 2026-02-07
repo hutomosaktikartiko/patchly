@@ -22,6 +22,11 @@ function IdleAction({ disabled, label, icon, onClick }: IdleActionProps) {
         <span>{label}</span>
         <div className="absolute inset-0 bg-linear-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]" />
       </button>
+      {disabled && (
+        <p className="mt-4 text-[9px] md:text-[10px] text-slate-500 font-medium uppercase tracking-widest animate-in fade-in duration-500">
+          Select files to begin
+        </p>
+      )}
     </div>
   );
 }
